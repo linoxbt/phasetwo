@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { WalletButton } from './WalletButton'
 import { Logo, LogoMark } from './Logo'
@@ -7,11 +7,14 @@ import { NetworkSwitcher } from './NetworkSwitcher'
 import { IconMenu, IconClose, IconList, IconPlus, IconBook, IconChartBar, IconSidebar } from './icons'
 import { useWallet } from '../lib/wallet'
 import { listEngagementsFor, getEngagement } from '../lib/surety'
-import { hasUnseenChanges } from '../lib/activity'
+import { getUnseenChanges } from '../lib/activity'
 import { mapWithConcurrency } from '../lib/concurrency'
 import { useNetwork } from '../lib/network'
+import { STATUS_LABEL, type StatusValue } from '../lib/types'
+import { splitTitle } from '../lib/format'
 
 const ACTIVITY_POLL_MS = 60_000
+const TOAST_LIFETIME_MS = 8_000
 
 const NAV_LINKS = [
   { to: '/stats', label: 'Transparency', icon: IconChartBar },
@@ -27,21 +30,28 @@ export function Layout() {
   const { address } = useWallet()
   const network = useNetwork()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [hasActivity, setHasActivity] = useState(false)
+  const [unseenCount, setUnseenCount] = useState(0)
+  const [toasts, setToasts] = useState<{ key: string; message: string }[]>([])
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'
   })
+  const notifiedKeys = useRef(new Set<string>())
+  const originalTitle = useRef(document.title)
 
   useEffect(() => {
     setMobileOpen(false)
   }, [location.pathname])
 
-  // "Changed since your last visit" only - purely client-side, no backend to
-  // push from, so this polls while the wallet is connected rather than alerting live.
+  // "Changed since your last visit" - purely client-side, no backend to push
+  // from, so this polls while the wallet is connected rather than alerting
+  // live. Surfaces a toast + browser Notification (if permitted) the first
+  // time each change is seen, and badges the tab title/sidebar icon for as
+  // long as any change remains unvisited.
   useEffect(() => {
     if (!address) {
-      setHasActivity(false)
+      setUnseenCount(0)
+      setToasts([])
       return
     }
     let cancelled = false
@@ -49,7 +59,39 @@ export function Layout() {
       try {
         const ids = await listEngagementsFor(address!)
         const engagements = await mapWithConcurrency(ids, 1, getEngagement)
-        if (!cancelled) setHasActivity(hasUnseenChanges(address!, engagements))
+        if (cancelled) return
+        const changes = getUnseenChanges(address!, engagements)
+        setUnseenCount(changes.length)
+
+        const fresh = changes.filter((c) => !notifiedKeys.current.has(`${c.id}:${c.status}`))
+        if (fresh.length === 0) return
+        for (const c of fresh) notifiedKeys.current.add(`${c.id}:${c.status}`)
+
+        const notificationsSupported = typeof Notification !== 'undefined'
+        if (notificationsSupported && Notification.permission === 'default') {
+          Notification.requestPermission().catch(() => {})
+        }
+
+        for (const c of fresh) {
+          const eng = engagements.find((e) => e.id === c.id)
+          const { title } = splitTitle(eng?.deliverable_spec ?? '')
+          const label = STATUS_LABEL[c.status as StatusValue] ?? c.status
+          const message = `#${c.id}${title ? ` - ${title}` : ''}: now ${label.toLowerCase()}`
+          const key = `${c.id}:${c.status}:${Date.now()}`
+          setToasts((prev) => [...prev, { key, message }])
+          setTimeout(() => setToasts((prev) => prev.filter((t) => t.key !== key)), TOAST_LIFETIME_MS)
+
+          if (notificationsSupported && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+            try {
+              new Notification('Phase Two', { body: message })
+            } catch {
+              // Notification construction can throw in some embedded/webview
+              // contexts even when permission reports granted - a missed
+              // native notification isn't worth surfacing as an error, the
+              // in-app toast above already covers it.
+            }
+          }
+        }
       } catch {
         // network hiccup - next poll retries, no need to surface this as an error
       }
@@ -62,6 +104,17 @@ export function Layout() {
     }
     // network is a dependency so switching networks re-polls against the newly selected contract
   }, [address, network])
+
+  useEffect(() => {
+    document.title = unseenCount > 0 ? `(${unseenCount}) ${originalTitle.current}` : originalTitle.current
+  }, [unseenCount])
+
+  // Visiting My Engagements is what actually marks changes seen (see
+  // MyEngagements.tsx/EngagementDetail.tsx) - clear the badge/title the
+  // moment that happens rather than waiting for the next poll tick.
+  useEffect(() => {
+    if (location.pathname === '/app') setUnseenCount(0)
+  }, [location.pathname])
 
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? 'hidden' : ''
@@ -134,7 +187,7 @@ export function Layout() {
               >
                 <span className="relative shrink-0">
                   <l.icon width={18} height={18} />
-                  {l.to === '/app' && hasActivity && (
+                  {l.to === '/app' && unseenCount > 0 && (
                     <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-coral-500" />
                   )}
                 </span>
@@ -175,6 +228,28 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex w-full max-w-sm flex-col gap-2">
+          {toasts.map((t) => (
+            <div
+              key={t.key}
+              className="flex items-start gap-2 rounded-xl border border-ink/10 bg-paper p-3.5 text-sm text-ink shadow-lg"
+            >
+              <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-coral-500" />
+              <p className="flex-1">{t.message}</p>
+              <button
+                type="button"
+                aria-label="Dismiss"
+                onClick={() => setToasts((prev) => prev.filter((x) => x.key !== t.key))}
+                className="shrink-0 text-ink-soft hover:text-ink"
+              >
+                <IconClose width={14} height={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

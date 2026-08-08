@@ -35,7 +35,7 @@ A single Intelligent Contract (class `Surety`) owns the full escrow lifecycle:
 
 | Method | Type | Description |
 |---|---|---|
-| `create_engagement(counterparty, deliverable_spec, deadline)` | write · payable | Locks the sent value as the deposit, opens a new engagement |
+| `create_engagement(counterparty, deliverable_spec, deadline, parent_id=0)` | write · payable | Locks the sent value as the deposit, opens a new engagement. A non-zero `parent_id` links it as one installment of the milestone plan rooted at that engagement id (same depositor/counterparty, and that engagement must itself be a root) - every other method treats a milestone exactly like any other engagement |
 | `accept_engagement(engagement_id)` | write · counterparty only | Accepts the engagement, unlocking `submit_deliverable`. Moves no funds |
 | `decline_engagement(engagement_id, reason)` | write · counterparty only | Declines with a required reason and refunds the deposit to the depositor immediately |
 | `submit_deliverable(engagement_id, evidence_urls, notes)` | write · counterparty only, one-time | Attaches evidence, moves the engagement to `submitted`. Requires `accepted` status first; blocked once the deadline has passed or after the first submission — further evidence goes through `raise_dispute` |
@@ -64,20 +64,21 @@ A wallet's encryption key pair is derived deterministically from a `personal_sig
 React 19 + TypeScript + Vite + Tailwind CSS v4, wallet connection via Reown AppKit (WalletConnect), on-chain reads/writes via `genlayer-js`.
 
 - **Landing** (`/`) — marketing page, its own minimal header
-- **My Engagements** (`/app`) — search + status-filterable list of your engagements, with an activity indicator for status changes since your last visit
-- **Create Engagement** (`/app/create`) — new engagement form
-- **Engagement Detail** (`/app/engagement/:id`) — full lifecycle actions: accept/decline, submit, request release, dispute, refund, appeal, plus a private comment thread
+- **My Engagements** (`/app`) — search + status-filterable list of your engagements
+- **Create Engagement** (`/app/create`) — new engagement form, with spec templates and an optional milestone plan (split the deposit into installments, each its own independent engagement)
+- **Engagement Detail** (`/app/engagement/:id`) — full lifecycle actions: accept/decline, submit, request release, dispute, refund, appeal, plus a private comment thread and, for milestones, sibling progress
+- **Profile** (`/app/profile/:address`) — an address's public track record (approval/dispute rates), also shown inline on Create and Detail pages before you engage with someone
 - **Transparency** (`/stats`) — public, wallet-free aggregate stats read directly from the contract
 - **Docs** (`/docs`) — in-app protocol reference
 
-App pages share a collapsible sidebar shell; a network switcher in the sidebar lets you flip between Asimov Testnet and Studio Network at runtime, each with its own contract deployment, wallet network prompt, and data.
+App pages share a collapsible sidebar shell; a network switcher in the sidebar lets you flip between Asimov Testnet and Studio Network at runtime, each with its own contract deployment, wallet network prompt, and data. Status changes since your last visit surface as a sidebar badge, a browser tab-title counter, a toast, and (with permission) a native browser notification while a tab stays open in the background - all client-side, no backend involved.
 
 ## Networks
 
 | Network | Chain id | Contract address | Notes |
 |---|---|---|---|
-| **Asimov Testnet** | `4221` | `0x0aEAB8C33dCB731A2848C4968823553A41F48bC7` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
-| **Studio Network** | `61999` | `0xd84AcAbf163a1D3e075539A9d53688fD96a77bc5` | Hosted GenLayer Studio. Gasless — no funded account needed |
+| **Asimov Testnet** | `4221` | `0x710C920D17f0D7c7cAC39f95C59fd42cc3C31eaB` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
+| **Studio Network** | `61999` | `0xD3f531A15B4d5cE8B8Fd62d6658768A711Bf36dB` | Hosted GenLayer Studio. Gasless — no funded account needed |
 
 ## Getting started
 
@@ -99,8 +100,8 @@ npm run dev
 `.env.local`:
 
 ```bash
-VITE_CONTRACT_ADDRESS_ASIMOV=0x0aEAB8C33dCB731A2848C4968823553A41F48bC7
-VITE_CONTRACT_ADDRESS_STUDIONET=0xd84AcAbf163a1D3e075539A9d53688fD96a77bc5
+VITE_CONTRACT_ADDRESS_ASIMOV=0x710C920D17f0D7c7cAC39f95C59fd42cc3C31eaB
+VITE_CONTRACT_ADDRESS_STUDIONET=0xD3f531A15B4d5cE8B8Fd62d6658768A711Bf36dB
 VITE_REOWN_PROJECT_ID=<your project id from https://dashboard.reown.com>
 ```
 
@@ -112,7 +113,7 @@ source .venv/bin/activate
 pip install genlayer-test genvm-linter
 
 genvm-lint check contracts/surety.py    # lint + SDK validation
-pytest tests/direct/ -v                 # 43 fast, in-memory tests
+pytest tests/direct/ -v                 # 50 fast, in-memory tests
 ```
 
 Integration tests (`tests/integration/`) run against a live network and exercise the full validator-judgment path with real evidence URLs — see `genlayer-dev:integration-tests` if you have the GenLayer Claude Code skill installed, or run with `gltest tests/integration/ -v -s --network <network>` directly.

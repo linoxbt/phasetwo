@@ -40,9 +40,18 @@ export function markAllSeen(address: string, engagements: { id: number; status: 
   writeLastSeen(address, map)
 }
 
-/** True if any engagement's current status differs from (or is missing from)
- * what was last recorded as seen - a brand new engagement counts as activity. */
-export function hasUnseenChanges(address: string, engagements: { id: number; status: string }[]): boolean {
+/** Engagements whose current status differs from (or is missing from) what
+ * was last recorded as seen - a brand new engagement counts as activity.
+ * Doesn't mark anything seen itself, so it's safe to call repeatedly (e.g.
+ * on every poll) without losing track of what's actually new. */
+export function getUnseenChanges(
+  address: string,
+  engagements: { id: number; status: string }[],
+): { id: number; status: string }[] {
   const map = readLastSeen(address)
-  return engagements.some((e) => map[e.id] !== e.status)
+  return engagements.filter((e) => map[e.id] !== e.status)
+}
+
+export function hasUnseenChanges(address: string, engagements: { id: number; status: string }[]): boolean {
+  return getUnseenChanges(address, engagements).length > 0
 }

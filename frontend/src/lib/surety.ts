@@ -44,12 +44,13 @@ export async function createEngagement(
   deliverableSpec: string,
   deadlineUnixSeconds: number,
   genAmount: string,
+  parentId = 0,
 ) {
   const client = createWriteClient(account, provider)
   return client.writeContract({
     address: getContractAddress(),
     functionName: 'create_engagement',
-    args: [counterparty, deliverableSpec, deadlineUnixSeconds],
+    args: [counterparty, deliverableSpec, deadlineUnixSeconds, parentId],
     value: parseEther(genAmount),
   })
 }

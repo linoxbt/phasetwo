@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import type { TransactionHash } from 'genlayer-js/types'
 import type { EIP1193Provider } from 'viem'
+import { formatEther } from 'viem'
 import { useWallet } from '../lib/wallet'
 import {
   getEngagement,
+  listEngagementsFor,
   acceptEngagement,
   declineEngagement,
   submitDeliverable,
@@ -17,8 +19,10 @@ import {
   getPubkey,
 } from '../lib/surety'
 import { getReadClient } from '../lib/genlayer-client'
+import { mapWithConcurrency } from '../lib/concurrency'
 import { getLastJudgmentTx } from '../lib/judgmentTx'
 import { deriveKeypair, ensureRegistered, encryptComment, tryDecryptComment, type CommentKeypair } from '../lib/commentCrypto'
+import { AddressReputation } from '../components/AddressReputation'
 import { withRetry } from '../lib/retry'
 import { useNetwork, getActiveChain } from '../lib/network'
 import { markSeen } from '../lib/activity'
@@ -32,7 +36,7 @@ import { Textarea } from '../components/ui/Input'
 import { Modal } from '../components/ui/Modal'
 import { Skeleton } from '../components/ui/Skeleton'
 import { IconScale } from '../components/icons'
-import { formatGen, formatUnixDate, isPast, shortAddress, splitTitle, appealWindowStatus } from '../lib/format'
+import { formatGen, formatUnixDate, isPast, shortAddress, splitTitle, parseSpec, appealWindowStatus } from '../lib/format'
 
 
 export function EngagementDetail() {
@@ -209,6 +213,17 @@ export function EngagementDetail() {
         </dd>
       </Card>
 
+      <MilestonePlanCard engagement={eng} />
+
+      {isParty && (
+        <div className="mt-8">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-soft">
+            {isDepositor ? "Counterparty's" : "Depositor's"} track record
+          </h2>
+          <AddressReputation address={isDepositor ? eng.counterparty : eng.depositor} />
+        </div>
+      )}
+
       {eng.evidence_urls.length > 0 && (
         <div className="mt-8">
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-soft">Evidence</h2>
@@ -263,6 +278,26 @@ export function EngagementDetail() {
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-soft">Decline reason</h2>
           <p className="whitespace-pre-wrap text-sm text-ink">{eng.notes}</p>
         </div>
+      )}
+
+      {isDepositor && (eng.status === 'created' || eng.status === 'declined') && (
+        <p className="mt-6 text-sm text-ink-soft">
+          Negotiated different terms in the comments, or got declined?{' '}
+          <Link
+            to="/app/create"
+            state={{
+              prefill: {
+                counterparty: eng.counterparty,
+                ...parseSpec(eng.deliverable_spec),
+                amount: formatEther(BigInt(eng.amount)),
+              },
+            }}
+            className="text-coral-600 underline hover:text-coral-700"
+          >
+            Recreate this engagement with new terms
+          </Link>
+          .
+        </p>
       )}
 
       {isCounterparty && provider && eng.status === 'accepted' && (
@@ -351,6 +386,68 @@ export function EngagementDetail() {
         </div>
       )}
     </div>
+  )
+}
+
+/** Shows when this engagement is part of a milestone plan (its own
+ * parent_id is set, or another engagement links to it as parent) - siblings
+ * share depositor+counterparty, so listing the depositor's engagements and
+ * filtering client-side finds them without any new contract method. */
+function MilestonePlanCard({ engagement }: { engagement: Engagement }) {
+  const network = useNetwork()
+  const [siblings, setSiblings] = useState<Engagement[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setSiblings(null)
+    ;(async () => {
+      try {
+        const ids = await listEngagementsFor(engagement.depositor)
+        const items = await mapWithConcurrency(ids, 1, getEngagement)
+        const rootId = engagement.parent_id || engagement.id
+        const plan = items.filter((e) => e.id === rootId || e.parent_id === rootId)
+        if (!cancelled) setSiblings(plan.length > 1 ? plan.sort((a, b) => a.id - b.id) : null)
+      } catch {
+        if (!cancelled) setSiblings(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [engagement.depositor, engagement.id, engagement.parent_id, network])
+
+  if (!siblings) return null
+
+  const releasedCount = siblings.filter((s) => s.status === 'released').length
+  const releasedTotal = siblings.filter((s) => s.status === 'released').reduce((sum, s) => sum + BigInt(s.amount), 0n)
+  const grandTotal = siblings.reduce((sum, s) => sum + BigInt(s.amount), 0n)
+
+  return (
+    <Card className="mt-8 p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-soft">Milestone plan</h2>
+        <span className="text-xs text-ink-soft">
+          {releasedCount}/{siblings.length} released &middot; {formatGen(releasedTotal)} of {formatGen(grandTotal)}
+        </span>
+      </div>
+      <ul className="space-y-2">
+        {siblings.map((s) => (
+          <li key={s.id} className="flex items-center justify-between gap-3 text-sm">
+            {s.id === engagement.id ? (
+              <span className="font-medium text-ink">#{s.id} - {splitTitle(s.deliverable_spec).title} (this one)</span>
+            ) : (
+              <Link to={`/app/engagement/${s.id}`} className="text-coral-600 underline hover:text-coral-700">
+                #{s.id} - {splitTitle(s.deliverable_spec).title}
+              </Link>
+            )}
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="text-xs text-ink-soft">{formatGen(s.amount)}</span>
+              <StatusBadge status={s.status} />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
@@ -493,7 +590,7 @@ function CommentThread({
   const otherPartyPubkey = viewerRole === 'depositor' ? counterpartyPubkey : depositorPubkey
 
   return (
-    <div className="mt-8">
+    <div id="comment-compose" className="mt-8 scroll-mt-24">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-soft">
         Comments{comments.length > 0 ? ` (${comments.length})` : ''}
       </h2>
@@ -821,7 +918,20 @@ function AcceptDeclineActions({
           <Button variant="secondary" onClick={() => setDeclining(true)} disabled={busy}>
             Decline
           </Button>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => document.getElementById('comment-compose')?.scrollIntoView({ behavior: 'smooth' })}
+          >
+            Suggest changes instead
+          </Button>
         </div>
+      )}
+      {!declining && (
+        <p className="mt-3 text-xs text-ink-soft">
+          Want different terms before committing? Message the depositor privately in the comment thread below - they
+          can cancel and recreate the engagement with new terms if you agree.
+        </p>
       )}
       {declining && (
         <>

@@ -49,3 +49,24 @@ export function splitTitle(spec: string): { title: string; description: string }
   if (idx === -1) return { title: spec.trim(), description: '' }
   return { title: spec.slice(0, idx).trim(), description: spec.slice(idx + 2).trim() }
 }
+
+/** Reverses CreateEngagement.tsx's spec assembly (title / description /
+ * "Verification criteria:\n..." / "Delivery method: ..." joined by blank
+ * lines) - used to pre-fill the create form when recreating an engagement
+ * with new terms. */
+export function parseSpec(spec: string): {
+  title: string
+  description: string
+  verificationCriteria: string
+  deliveryMethod: string
+} {
+  const parts = spec.split('\n\n')
+  const vcPart = parts.find((p) => p.startsWith('Verification criteria:')) ?? ''
+  const dmPart = parts.find((p) => p.startsWith('Delivery method:')) ?? ''
+  return {
+    title: (parts[0] ?? '').trim(),
+    description: (parts[1] ?? '').trim(),
+    verificationCriteria: vcPart.replace(/^Verification criteria:\n?/, '').trim(),
+    deliveryMethod: dmPart.replace(/^Delivery method:\s*/, '').trim(),
+  }
+}

@@ -34,6 +34,7 @@ export interface Engagement {
   funds_released: boolean
   comments: Comment[]
   rejected_at: number
+  parent_id: number
 }
 
 export const STATUS_LABEL: Record<StatusValue, string> = {

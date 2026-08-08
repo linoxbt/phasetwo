@@ -65,6 +65,12 @@ class Engagement:
     funds_released: bool
     comments: DynArray[Comment]
     rejected_at: u256
+    # 0 = standalone. Non-zero links this engagement as one installment of a
+    # milestone plan, pointing at the plan's first (root) engagement id - see
+    # create_engagement's parent_id handling. Every other method treats a
+    # milestone exactly like any other engagement; this field exists purely
+    # for the frontend to group and display siblings.
+    parent_id: u256
 
 
 class Surety(gl.Contract):
@@ -117,7 +123,9 @@ class Surety(gl.Contract):
     # ------------------------------------------------------------------
 
     @gl.public.write.payable
-    def create_engagement(self, counterparty: Address, deliverable_spec: str, deadline: int) -> int:
+    def create_engagement(
+        self, counterparty: Address, deliverable_spec: str, deadline: int, parent_id: int = 0
+    ) -> int:
         counterparty = Address(counterparty)
         deadline = u256(deadline)
         if gl.message.value == 0:
@@ -131,6 +139,20 @@ class Surety(gl.Contract):
         depositor = gl.message.sender_address
         if counterparty == depositor:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} counterparty must differ from depositor")
+
+        # A milestone plan is just a flat group of ordinary engagements that
+        # happen to share a parent - every other method (accept, submit,
+        # judge, dispute, refund) is completely unaware of parent_id and
+        # treats each one independently.
+        parent = u256(parent_id)
+        if parent != 0:
+            root = self._get(parent)
+            if root.depositor != depositor or root.counterparty != counterparty:
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} parent_id must be an engagement between the same depositor and counterparty"
+                )
+            if root.parent_id != 0:
+                raise gl.vm.UserError(f"{ERROR_EXPECTED} parent_id must point at a root engagement, not another milestone")
 
         engagement_id = self.next_id
         self.next_id = u256(self.next_id + 1)
@@ -151,6 +173,7 @@ class Surety(gl.Contract):
             funds_released=False,
             comments=[],
             rejected_at=u256(0),
+            parent_id=parent,
         )
         self.engagements[engagement_id] = eng
         self.all_ids.append(engagement_id)
@@ -448,6 +471,7 @@ Respond with strict JSON only, no other text:
                 {"author": c.author, "text": c.text, "created_at": int(c.created_at)} for c in eng.comments
             ],
             "rejected_at": int(eng.rejected_at),
+            "parent_id": int(eng.parent_id),
         }
 
     @gl.public.view
