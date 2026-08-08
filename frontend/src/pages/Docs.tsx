@@ -108,7 +108,12 @@ export function Docs() {
             <p>
               Nothing about the verdict is trusted from a single party or a single model - every validator
               re-derives the judgment independently, and the reasoning behind every verdict (including rejections) is
-              stored on-chain permanently.
+              stored on-chain permanently. Every engagement, its status, and the GEN moving through the contract are
+              visible on the public{' '}
+              <a href="/stats" className="text-coral-600 underline hover:text-coral-700">
+                Transparency page
+              </a>{' '}
+              - the one thing that stays private is the comment thread between the two parties.
             </p>
           </Section>
 
@@ -118,22 +123,27 @@ export function Docs() {
                 The depositor locks the payment, names the counterparty address, sets a deadline, and writes the
                 deliverable spec - the exact criteria validators will judge against later.
               </Step>
-              <Step n={2} title="Submit the evidence">
-                The counterparty submits one or more evidence URLs (a repo, a live deployment, a document) plus
-                optional notes for the reviewer.
+              <Step n={2} title="Accept, or decline">
+                The counterparty must explicitly accept before doing any work - <Code>submit_deliverable</Code>{' '}
+                isn&apos;t callable until they do. Declining requires a reason and refunds the deposit to the
+                depositor immediately; no work, no judgment, no waiting.
               </Step>
-              <Step n={3} title="Validators judge live">
+              <Step n={3} title="Submit the evidence">
+                Once accepted, the counterparty submits one or more evidence URLs (a repo, a live deployment, a
+                document) plus optional notes for the reviewer.
+              </Step>
+              <Step n={4} title="Validators judge live">
                 Anyone can trigger <Code>request_release</Code>. Five independent validators fetch the evidence
                 themselves at judgment time and compare it against the spec - nothing submitted as text is
                 trusted at face value. Judgment typically completes in under a minute; occasionally longer if a
                 validator round needs a retry.
               </Step>
-              <Step n={4} title="Release, or dispute">
+              <Step n={5} title="Release, or dispute">
                 A pass releases funds to the counterparty immediately. A rejection opens a 3-day appeal window;
-                either party can raise a dispute with additional evidence and re-trigger judgment, or escalate
-                through GenLayer&apos;s protocol-level appeal (Asimov Testnet only).
+                either party can raise a dispute with additional evidence, then request judgment again, or
+                escalate through GenLayer&apos;s protocol-level appeal (Asimov Testnet only).
               </Step>
-              <Step n={5} title="Settle a final rejection">
+              <Step n={6} title="Settle a final rejection">
                 If the appeal window closes with no dispute raised, anyone can permissionlessly finalize it -
                 the deposit refunds to the depositor. This is the terminal path: a rejected engagement can never
                 sit stuck forever.
@@ -162,6 +172,13 @@ export function Docs() {
                 on-chain re-evaluation, not a support ticket. GenLayer&apos;s appeal contracts are only configured on
                 Asimov Testnet today, so this path isn&apos;t available on Studio Network.
               </Concept>
+              <Concept term="Private comments">
+                The two parties can message each other through the engagement&apos;s comment thread without it
+                being readable by anyone else - each comment is end-to-end encrypted with a key pair a wallet
+                derives from a signature, never a stored secret. The first time either party opens the thread,
+                a one-time signature enables secure messaging for that address going forward, on every engagement
+                it&apos;s ever a party to.
+              </Concept>
             </dl>
           </Section>
 
@@ -169,8 +186,15 @@ export function Docs() {
             <p>An engagement moves through a small set of statuses:</p>
             <ul className="space-y-2">
               <li>
-                <Code>created</Code> - deposit locked, waiting on the counterparty to submit evidence, or on the
-                deadline to pass.
+                <Code>created</Code> - deposit locked, waiting on the counterparty to accept or decline.
+              </li>
+              <li>
+                <Code>accepted</Code> - the counterparty has accepted; waiting on evidence, or on the deadline to
+                pass.
+              </li>
+              <li>
+                <Code>declined</Code> - the counterparty declined before starting work; deposit refunded to the
+                depositor immediately.
               </li>
               <li>
                 <Code>submitted</Code> - evidence is in; anyone can trigger validator judgment.
@@ -182,11 +206,12 @@ export function Docs() {
                 <Code>rejected</Code> - validators failed the deliverable; a 3-day appeal window opens.
               </li>
               <li>
-                <Code>disputed</Code> - a party added evidence and re-triggered judgment after a rejection.
+                <Code>disputed</Code> - a party added evidence and re-triggered judgment after a rejection or a
+                release.
               </li>
               <li>
-                <Code>expired</Code> - the deadline passed with nothing submitted; deposit refunded to the
-                depositor.
+                <Code>expired</Code> - the deadline passed with nothing submitted, whether from <Code>created</Code>{' '}
+                or <Code>accepted</Code>; deposit refunded to the depositor.
               </li>
               <li>
                 <Code>refunded</Code> - a rejection&apos;s appeal window closed with no dispute raised; deposit
@@ -201,27 +226,52 @@ export function Docs() {
               <Method name="create_engagement" args="counterparty, deliverable_spec, deadline" note="Write · payable">
                 Locks the sent value as the deposit and opens a new engagement.
               </Method>
+              <Method name="accept_engagement" args="engagement_id" note="Write · counterparty only">
+                Accepts the engagement, unlocking <Code>submit_deliverable</Code>. Moves no funds.
+              </Method>
+              <Method name="decline_engagement" args="engagement_id, reason" note="Write · counterparty only">
+                Declines the engagement with a required reason and refunds the deposit to the depositor
+                immediately.
+              </Method>
               <Method name="submit_deliverable" args="engagement_id, evidence_urls, notes" note="Write · counterparty only, one-time">
-                Attaches evidence and moves the engagement to <Code>submitted</Code>. Can only be called once, before
-                judgment - updating evidence after that goes through <Code>raise_dispute</Code> instead.
+                Attaches evidence and moves the engagement to <Code>submitted</Code>. Requires the engagement to be{' '}
+                <Code>accepted</Code> first, and can only be called once - updating evidence after that goes through{' '}
+                <Code>raise_dispute</Code> instead.
               </Method>
               <Method name="request_release" args="engagement_id" note="Write · triggers validator judgment">
                 Runs the validator comparison against the spec; releases or rejects based on consensus.
               </Method>
               <Method name="raise_dispute" args="engagement_id, evidence_urls, reason" note="Write · depositor or counterparty">
-                Appends evidence and increments the dispute round after a rejection or release.
+                Appends evidence and increments the dispute round after a rejection or a release. Doesn&apos;t
+                re-run judgment itself - a subsequent <Code>request_release</Code> call does that.
               </Method>
-              <Method name="refund_expired" args="engagement_id" note="Write · after deadline, status created only">
+              <Method name="refund_expired" args="engagement_id" note="Write · after deadline, status created or accepted">
                 Refunds the deposit to the depositor if nothing was ever submitted.
               </Method>
               <Method name="settle_rejected" args="engagement_id" note="Write · permissionless, after the appeal window closes">
                 Finalizes a rejected engagement with no dispute raised - refunds the deposit to the depositor.
+              </Method>
+              <Method name="add_comment" args="engagement_id, text" note="Write · depositor or counterparty">
+                Posts a message to the engagement&apos;s comment thread. The app encrypts <Code>text</Code> into an
+                envelope only the depositor and counterparty can decrypt before calling this - see{' '}
+                <Code>Private comments</Code> above.
+              </Method>
+              <Method name="register_pubkey" args="pubkey" note="Write · global, once per address">
+                Publishes the caller&apos;s comment-encryption public key, reusable across every engagement that
+                address is ever a party to.
+              </Method>
+              <Method name="get_pubkey" args="address" note="View">
+                Returns an address&apos;s registered comment-encryption public key, or an empty string if it hasn&apos;t
+                registered one.
               </Method>
               <Method name="get_engagement" args="engagement_id" note="View">
                 Returns the full engagement record.
               </Method>
               <Method name="list_engagements_for" args="address" note="View">
                 Returns engagement ids where the address is depositor or counterparty.
+              </Method>
+              <Method name="list_all_ids" args="" note="View">
+                Returns every engagement id that has ever been created - backs the public Transparency page.
               </Method>
               <Method name="get_appeal_window_seconds" args="" note="View">
                 Returns the configured appeal window, in seconds (3 days by default).
@@ -278,6 +328,17 @@ export function Docs() {
                 It doesn&apos;t sit stuck forever. A rejection opens a 3-day appeal window - either party can
                 dispute with new evidence during it, but once it closes, anyone can permissionlessly call{' '}
                 <Code>settle_rejected</Code> to refund the deposit back to the depositor.
+              </Concept>
+              <Concept term="Can a release be reversed after funds are paid out?">
+                Not on this contract. Disputing a <Code>released</Code> engagement records the disagreement
+                on-chain and moves it to <Code>disputed</Code>, but there&apos;s no clawback path here - funds
+                already paid out can only be revisited through GenLayer&apos;s protocol-level appeal on the
+                original release transaction, not by this contract moving value a second time.
+              </Concept>
+              <Concept term="Are comments visible to anyone else?">
+                No. Each comment is end-to-end encrypted for the depositor and counterparty only - not even this
+                app&apos;s own contract-read code can see the plaintext. A comment posted before either party
+                enabled secure messaging renders as unencrypted, clearly labeled as such.
               </Concept>
             </dl>
           </Section>

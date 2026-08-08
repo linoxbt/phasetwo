@@ -5,6 +5,8 @@ import type { EIP1193Provider } from 'viem'
 import { useWallet } from '../lib/wallet'
 import {
   getEngagement,
+  acceptEngagement,
+  declineEngagement,
   submitDeliverable,
   requestRelease,
   raiseDispute,
@@ -12,9 +14,11 @@ import {
   settleRejected,
   getAppealWindowSeconds,
   addComment,
+  getPubkey,
 } from '../lib/surety'
 import { getReadClient } from '../lib/genlayer-client'
 import { getLastJudgmentTx } from '../lib/judgmentTx'
+import { deriveKeypair, ensureRegistered, encryptComment, tryDecryptComment, type CommentKeypair } from '../lib/commentCrypto'
 import { withRetry } from '../lib/retry'
 import { useNetwork, getActiveChain } from '../lib/network'
 import { markSeen } from '../lib/activity'
@@ -181,7 +185,13 @@ export function EngagementDetail() {
         <dt className="text-ink-soft">Deposit</dt>
         <dd className="text-ink">{formatGen(eng.amount)}</dd>
         <dt className="text-ink-soft">Deadline</dt>
-        <dd className={isPast(eng.deadline) && eng.status === 'created' ? 'text-coral-600' : 'text-ink'}>
+        <dd
+          className={
+            isPast(eng.deadline) && (eng.status === 'created' || eng.status === 'accepted')
+              ? 'text-coral-600'
+              : 'text-ink'
+          }
+        >
           {formatUnixDate(eng.deadline)}
         </dd>
         <dt className="text-ink-soft">Dispute round</dt>
@@ -230,6 +240,8 @@ export function EngagementDetail() {
         address={address}
         provider={provider}
         engagementId={eng.id}
+        depositor={eng.depositor}
+        counterparty={eng.counterparty}
         onSettled={(ok) => {
           if (ok) refresh()
         }}
@@ -238,10 +250,28 @@ export function EngagementDetail() {
       {!isParty && address && <p className="mt-8 text-sm text-ink-soft">You are not a party to this engagement.</p>}
 
       {isCounterparty && provider && eng.status === 'created' && (
+        <AcceptDeclineActions
+          address={address!}
+          provider={provider}
+          engagementId={eng.id}
+          onSettled={(ok) => onSettled(ok)}
+        />
+      )}
+
+      {eng.status === 'declined' && eng.notes && (
+        <div className="mt-8 rounded-2xl border border-ink/10 bg-ink/[0.03] p-5">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-soft">Decline reason</h2>
+          <p className="whitespace-pre-wrap text-sm text-ink">{eng.notes}</p>
+        </div>
+      )}
+
+      {isCounterparty && provider && eng.status === 'accepted' && (
         <SubmitDeliverableForm
           address={address!}
           provider={provider}
           engagementId={eng.id}
+          depositor={eng.depositor}
+          counterparty={eng.counterparty}
           onSubmitting={setPendingTx}
           onSettled={(ok) => onSettled(ok)}
         />
@@ -302,7 +332,7 @@ export function EngagementDetail() {
         </div>
       )}
 
-      {isDepositor && provider && eng.status === 'created' && isPast(eng.deadline) && (
+      {isDepositor && provider && (eng.status === 'created' || eng.status === 'accepted') && isPast(eng.deadline) && (
         <ActionButton
           label="Refund (deadline passed)"
           description="No submission was made before the deadline - refund the deposit back to you."
@@ -332,25 +362,37 @@ function Timeline({ status, judging = false }: { status: StatusValue; judging?: 
   // so anyone viewing a submitted engagement sees what's next, not just the
   // person who happened to click Request Release.
   const judgedTerminal: StatusValue[] = ['released', 'rejected', 'refunded']
-  const otherTerminal: StatusValue[] = ['disputed', 'expired']
   const isActivelyJudgingDispute = judging && status === 'disputed'
 
   let steps: string[]
   let reachedCount: number
-  if (judgedTerminal.includes(status)) {
-    steps = ['created', 'submitted', 'judging', status]
-    reachedCount = 4
+  if (status === 'declined') {
+    steps = ['created', 'declined']
+    reachedCount = 2
+  } else if (status === 'expired') {
+    // Reachable from either 'created' (never accepted) or 'accepted' (accepted,
+    // never delivered) - current state alone can't tell which, so this stays
+    // a simple 2-step summary either way.
+    steps = ['created', 'expired']
+    reachedCount = 2
+  } else if (judgedTerminal.includes(status)) {
+    steps = ['created', 'accepted', 'submitted', 'judging', status]
+    reachedCount = 5
   } else if (isActivelyJudgingDispute) {
-    steps = ['created', 'submitted', 'disputed', 'judging']
+    steps = ['created', 'accepted', 'submitted', 'disputed', 'judging']
+    reachedCount = 5
+  } else if (status === 'disputed') {
+    steps = ['created', 'accepted', 'submitted', 'disputed']
     reachedCount = 4
-  } else if (otherTerminal.includes(status)) {
-    steps = ['created', 'submitted', status]
-    reachedCount = 3
   } else if (status === 'submitted') {
-    steps = ['created', 'submitted', 'judging', 'released']
+    steps = ['created', 'accepted', 'submitted', 'judging', 'released']
+    reachedCount = 3
+  } else if (status === 'accepted') {
+    steps = ['created', 'accepted', 'submitted', 'judging', 'released']
     reachedCount = 2
   } else {
-    steps = ['created', 'submitted', 'judging', 'released']
+    // created
+    steps = ['created', 'accepted', 'submitted', 'judging', 'released']
     reachedCount = 1
   }
 
@@ -386,6 +428,8 @@ function CommentThread({
   address,
   provider,
   engagementId,
+  depositor,
+  counterparty,
   onSettled,
 }: {
   comments: Comment[]
@@ -393,6 +437,8 @@ function CommentThread({
   address: `0x${string}` | null
   provider: EIP1193Provider | null
   engagementId: number
+  depositor: `0x${string}`
+  counterparty: `0x${string}`
   onSettled: (ok: boolean) => void
 }) {
   const [text, setText] = useState('')
@@ -400,53 +446,139 @@ function CommentThread({
   const [hash, setHash] = useState<`0x${string}` | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const [keypair, setKeypair] = useState<CommentKeypair | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
+  const [depositorPubkey, setDepositorPubkey] = useState<string | null>(null)
+  const [counterpartyPubkey, setCounterpartyPubkey] = useState<string | null>(null)
+  const [pubkeysLoaded, setPubkeysLoaded] = useState(false)
+
+  const viewerRole: 'depositor' | 'counterparty' | null =
+    address?.toLowerCase() === depositor.toLowerCase()
+      ? 'depositor'
+      : address?.toLowerCase() === counterparty.toLowerCase()
+        ? 'counterparty'
+        : null
+
+  useEffect(() => {
+    let cancelled = false
+    setPubkeysLoaded(false)
+    Promise.all([getPubkey(depositor), getPubkey(counterparty)]).then(([d, c]) => {
+      if (cancelled) return
+      setDepositorPubkey(d || null)
+      setCounterpartyPubkey(c || null)
+      setPubkeysLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [depositor, counterparty, engagementId])
+
+  async function unlock() {
+    if (!address || !provider) return
+    setUnlocking(true)
+    setError(null)
+    try {
+      const kp = await deriveKeypair(address, provider)
+      await ensureRegistered(address, provider, kp)
+      setKeypair(kp)
+      if (viewerRole === 'depositor') setDepositorPubkey(kp.publicKeyBase64)
+      if (viewerRole === 'counterparty') setCounterpartyPubkey(kp.publicKeyBase64)
+    } catch (err: any) {
+      setError(err?.message ?? 'Could not enable secure messaging')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
+  const otherPartyPubkey = viewerRole === 'depositor' ? counterpartyPubkey : depositorPubkey
+
   return (
     <div className="mt-8">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-soft">
         Comments{comments.length > 0 ? ` (${comments.length})` : ''}
       </h2>
 
+      {!isParty && comments.length > 0 && (
+        <p className="mb-3 text-sm text-ink-soft">
+          Comments are end-to-end encrypted between the depositor and counterparty - not visible here.
+        </p>
+      )}
+
+      {isParty && !keypair && pubkeysLoaded && (
+        <Card className="mb-3 p-4 text-sm">
+          <p className="mb-2 text-ink-soft">
+            Comments here are end-to-end encrypted - only the depositor and counterparty can read them, not
+            validators, not the public, not even this app&apos;s own operator. Enable secure messaging with your
+            wallet to read and post.
+          </p>
+          <Button size="sm" variant="secondary" loading={unlocking} onClick={unlock}>
+            Enable secure messaging
+          </Button>
+        </Card>
+      )}
+
       {comments.length === 0 && <p className="text-sm text-ink-soft">No comments yet.</p>}
 
       <ul className="space-y-3">
-        {comments.map((c, i) => (
-          <li key={i} className="rounded-xl border border-ink/8 bg-paper p-4">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="font-mono text-xs text-ink-soft">{shortAddress(c.author)}</span>
-              <span className="text-xs text-ink-soft/60">{formatUnixDate(c.created_at)}</span>
-            </div>
-            <p className="whitespace-pre-wrap text-sm text-ink">{c.text}</p>
-          </li>
-        ))}
+        {comments.map((c, i) => {
+          const decoded = keypair && viewerRole ? tryDecryptComment(c.text, keypair.secretKeyHex, viewerRole) : null
+          return (
+            <li key={i} className="rounded-xl border border-ink/8 bg-paper p-4">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="font-mono text-xs text-ink-soft">{shortAddress(c.author)}</span>
+                <span className="text-xs text-ink-soft/60">{formatUnixDate(c.created_at)}</span>
+              </div>
+              {decoded ? (
+                <>
+                  <p className="whitespace-pre-wrap text-sm text-ink">{decoded.plaintext}</p>
+                  {!decoded.encrypted && <p className="mt-1 text-[10px] text-amber-600">Posted unencrypted</p>}
+                </>
+              ) : (
+                <p className="text-sm italic text-ink-soft">
+                  {isParty ? 'Enable secure messaging above to read this.' : 'Encrypted - only visible to the two parties.'}
+                </p>
+              )}
+            </li>
+          )
+        })}
       </ul>
 
-      {isParty && address && provider && (
+      {isParty && keypair && address && provider && (
         <div className="mt-4">
-          <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a comment..." rows={2} />
-          <div className="mt-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={busy}
-              onClick={async () => {
-                if (!text.trim()) {
-                  setError('Comment cannot be empty.')
-                  return
-                }
-                setBusy(true)
-                setError(null)
-                try {
-                  const h = (await addComment(address, provider, engagementId, text.trim())) as `0x${string}`
-                  setHash(h)
-                } catch (err: any) {
-                  setError(err?.message ?? 'Transaction failed')
-                  setBusy(false)
-                }
-              }}
-            >
-              Post Comment
-            </Button>
-          </div>
+          {!otherPartyPubkey ? (
+            <p className="text-sm text-ink-soft">
+              Waiting for the other party to enable secure messaging before you can post here.
+            </p>
+          ) : (
+            <>
+              <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a comment..." rows={2} />
+              <div className="mt-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={busy}
+                  onClick={async () => {
+                    if (!text.trim()) {
+                      setError('Comment cannot be empty.')
+                      return
+                    }
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      const envelope = encryptComment(text.trim(), depositorPubkey!, counterpartyPubkey!)
+                      const h = (await addComment(address, provider, engagementId, envelope)) as `0x${string}`
+                      setHash(h)
+                    } catch (err: any) {
+                      setError(err?.message ?? 'Transaction failed')
+                      setBusy(false)
+                    }
+                  }}
+                >
+                  Post Comment
+                </Button>
+              </div>
+            </>
+          )}
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
           {hash && (
             <div className="mt-3">
@@ -628,16 +760,118 @@ function RequestReleaseAction({
   )
 }
 
+function AcceptDeclineActions({
+  address,
+  provider,
+  engagementId,
+  onSettled,
+}: {
+  address: `0x${string}`
+  provider: EIP1193Provider
+  engagementId: number
+  onSettled: (ok: boolean) => void
+}) {
+  const [declining, setDeclining] = useState(false)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [hash, setHash] = useState<`0x${string}` | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function accept() {
+    setBusy(true)
+    setError(null)
+    try {
+      const h = (await acceptEngagement(address, provider, engagementId)) as `0x${string}`
+      setHash(h)
+    } catch (err: any) {
+      setError(err?.message ?? 'Transaction failed')
+      setBusy(false)
+    }
+  }
+
+  async function decline() {
+    if (!reason.trim()) {
+      setError('A reason is required to decline.')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const h = (await declineEngagement(address, provider, engagementId, reason.trim())) as `0x${string}`
+      setHash(h)
+    } catch (err: any) {
+      setError(err?.message ?? 'Transaction failed')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="mt-6 p-5">
+      <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-ink-soft">Accept this engagement?</h2>
+      <p className="mb-3 text-sm text-ink-soft">
+        Review the spec above before starting work. Accepting doesn&apos;t move any funds - it just confirms
+        you&apos;re taking this on and unlocks submitting a deliverable. Declining refunds the deposit back to the
+        depositor immediately.
+      </p>
+      {!declining && (
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={accept} loading={busy}>
+            Accept
+          </Button>
+          <Button variant="secondary" onClick={() => setDeclining(true)} disabled={busy}>
+            Decline
+          </Button>
+        </div>
+      )}
+      {declining && (
+        <>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why are you declining?"
+            rows={2}
+            className="mb-3"
+          />
+          <div className="flex flex-wrap gap-3">
+            <Button variant="danger" onClick={decline} loading={busy}>
+              Confirm Decline
+            </Button>
+            <Button variant="ghost" onClick={() => setDeclining(false)} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </>
+      )}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {hash && (
+        <div className="mt-3">
+          <TxStatus
+            hash={hash}
+            onSettled={(ok) => {
+              setBusy(false)
+              onSettled(ok)
+            }}
+          />
+        </div>
+      )}
+    </Card>
+  )
+}
+
 function SubmitDeliverableForm({
   address,
   provider,
   engagementId,
+  depositor,
+  counterparty,
   onSubmitting,
   onSettled,
 }: {
   address: `0x${string}`
   provider: EIP1193Provider
   engagementId: number
+  depositor: `0x${string}`
+  counterparty: `0x${string}`
   onSubmitting: (hash: `0x${string}` | null) => void
   onSettled: (ok: boolean) => void
 }) {
@@ -705,14 +939,23 @@ function SubmitDeliverableForm({
               // Best-effort: let the creator know via the comment thread, since
               // there's no off-chain notification to send this as. The
               // deliverable is already submitted regardless of whether this
-              // second transaction succeeds.
+              // second transaction succeeds. Comments are end-to-end
+              // encrypted, so this only posts if both parties already have a
+              // registered key - it never falls back to plaintext.
               try {
-                const ch = (await addComment(
-                  address,
-                  provider,
-                  engagementId,
-                  'Deliverable submitted for review.',
-                )) as `0x${string}`
+                const [depositorPubkey, counterpartyPubkey] = await Promise.all([
+                  getPubkey(depositor),
+                  getPubkey(counterparty),
+                ])
+                if (!depositorPubkey || !counterpartyPubkey) {
+                  setBusy(false)
+                  onSettled(true)
+                  return
+                }
+                const keypair = await deriveKeypair(address, provider)
+                await ensureRegistered(address, provider, keypair)
+                const envelope = encryptComment('Deliverable submitted for review.', depositorPubkey, counterpartyPubkey)
+                const ch = (await addComment(address, provider, engagementId, envelope)) as `0x${string}`
                 setCommentHash(ch)
               } catch {
                 setBusy(false)

@@ -54,6 +54,31 @@ export async function createEngagement(
   })
 }
 
+export async function acceptEngagement(account: `0x${string}`, provider: EIP1193Provider, engagementId: number) {
+  const client = createWriteClient(account, provider)
+  return client.writeContract({
+    address: getContractAddress(),
+    functionName: 'accept_engagement',
+    args: [engagementId],
+    value: 0n,
+  })
+}
+
+export async function declineEngagement(
+  account: `0x${string}`,
+  provider: EIP1193Provider,
+  engagementId: number,
+  reason: string,
+) {
+  const client = createWriteClient(account, provider)
+  return client.writeContract({
+    address: getContractAddress(),
+    functionName: 'decline_engagement',
+    args: [engagementId, reason],
+    value: 0n,
+  })
+}
+
 export async function submitDeliverable(
   account: `0x${string}`,
   provider: EIP1193Provider,
@@ -140,4 +165,25 @@ export async function addComment(
     args: [engagementId, text],
     value: 0n,
   })
+}
+
+export async function registerPubkey(account: `0x${string}`, provider: EIP1193Provider, pubkey: string) {
+  const client = createWriteClient(account, provider)
+  return client.writeContract({
+    address: getContractAddress(),
+    functionName: 'register_pubkey',
+    args: [pubkey],
+    value: 0n,
+  })
+}
+
+export async function getPubkey(address: `0x${string}`): Promise<string> {
+  const result = await withRetry(() =>
+    getReadClient().readContract({
+      address: getContractAddress(),
+      functionName: 'get_pubkey',
+      args: [address],
+    }),
+  )
+  return (result as unknown as string) ?? ''
 }

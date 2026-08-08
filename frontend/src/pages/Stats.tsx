@@ -12,12 +12,24 @@ import { Skeleton } from '../components/ui/Skeleton'
 import { AnimatedCounter } from '../components/ui/AnimatedCounter'
 import { formatGen, formatUnixDate, shortAddress, splitTitle } from '../lib/format'
 
-const STATUS_ORDER: StatusValue[] = ['created', 'submitted', 'released', 'rejected', 'disputed', 'expired', 'refunded']
-const LOCKED_STATUSES: StatusValue[] = ['created', 'submitted', 'disputed', 'rejected']
-const REFUNDED_STATUSES: StatusValue[] = ['expired', 'refunded']
+const STATUS_ORDER: StatusValue[] = [
+  'created',
+  'accepted',
+  'declined',
+  'submitted',
+  'released',
+  'rejected',
+  'disputed',
+  'expired',
+  'refunded',
+]
+const LOCKED_STATUSES: StatusValue[] = ['created', 'accepted', 'submitted', 'disputed', 'rejected']
+const REFUNDED_STATUSES: StatusValue[] = ['declined', 'expired', 'refunded']
 
 const STATUS_BAR_COLOR: Record<StatusValue, string> = {
   created: 'bg-ink/20',
+  accepted: 'bg-sky-400',
+  declined: 'bg-ink/10',
   submitted: 'bg-violet-400',
   released: 'bg-emerald-400',
   rejected: 'bg-red-400',

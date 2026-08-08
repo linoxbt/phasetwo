@@ -2,6 +2,8 @@ import { STATUS_LABEL, type StatusValue } from '../lib/types'
 
 const STYLES: Record<StatusValue, string> = {
   created: 'bg-ink/6 text-ink-soft',
+  accepted: 'bg-sky-100 text-sky-700',
+  declined: 'bg-ink/5 text-ink-soft/70',
   submitted: 'bg-violet-100 text-violet-700',
   released: 'bg-emerald-100 text-emerald-700',
   rejected: 'bg-red-100 text-red-700',

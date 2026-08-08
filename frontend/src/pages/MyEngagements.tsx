@@ -16,7 +16,18 @@ import { EngagementCardSkeleton } from '../components/ui/Skeleton'
 import { IconArrowRight } from '../components/icons'
 import { formatGen, formatUnixDate, shortAddress, splitTitle } from '../lib/format'
 
-const STATUS_FILTERS: Array<StatusValue | 'all'> = ['all', 'created', 'submitted', 'released', 'rejected', 'disputed', 'expired']
+const STATUS_FILTERS: Array<StatusValue | 'all'> = [
+  'all',
+  'created',
+  'accepted',
+  'declined',
+  'submitted',
+  'released',
+  'rejected',
+  'disputed',
+  'expired',
+  'refunded',
+]
 
 export function MyEngagements() {
   const { address, connect } = useWallet()

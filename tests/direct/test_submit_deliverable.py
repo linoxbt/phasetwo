@@ -15,9 +15,15 @@ def _create(contract, direct_vm, depositor, counterparty, spec="Ship it"):
     return eid
 
 
+def _accept(contract, direct_vm, counterparty, eid):
+    direct_vm.sender = counterparty
+    contract.accept_engagement(eid)
+
+
 def test_submit_deliverable_success(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
+    _accept(contract, direct_vm, direct_bob, eid)
 
     direct_vm.sender = direct_bob
     contract.submit_deliverable(eid, ["https://github.com/example/repo"], "done, see repo")
@@ -40,10 +46,20 @@ def test_submit_deliverable_only_counterparty(direct_vm, direct_deploy, direct_a
 def test_submit_deliverable_requires_evidence(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
+    _accept(contract, direct_vm, direct_bob, eid)
 
     direct_vm.sender = direct_bob
     with direct_vm.expect_revert("At least one evidence URL is required"):
         contract.submit_deliverable(eid, [], "no proof")
+
+
+def test_submit_deliverable_blocks_before_acceptance(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_surety(direct_vm, direct_deploy)
+    eid = _create(contract, direct_vm, direct_alice, direct_bob)
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("Cannot submit in status 'created'"):
+        contract.submit_deliverable(eid, ["https://example.com"], "too soon")
 
 
 def test_submit_deliverable_blocks_resubmission(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -51,6 +67,7 @@ def test_submit_deliverable_blocks_resubmission(direct_vm, direct_deploy, direct
     # raise_dispute's additional_evidence, not a second submit_deliverable.
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
+    _accept(contract, direct_vm, direct_bob, eid)
 
     direct_vm.sender = direct_bob
     contract.submit_deliverable(eid, ["https://example.com/v1"], "v1")
@@ -66,6 +83,7 @@ def test_submit_deliverable_blocks_resubmission(direct_vm, direct_deploy, direct
 def test_submit_deliverable_caps_url_count(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
+    _accept(contract, direct_vm, direct_bob, eid)
 
     direct_vm.sender = direct_bob
     too_many = [f"https://example.com/{i}" for i in range(11)]

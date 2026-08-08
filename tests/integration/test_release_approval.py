@@ -28,6 +28,9 @@ def test_request_release_approves_matching_evidence():
 
     eid = 1  # first engagement created against a freshly deployed contract
 
+    tx = counterparty_contract.accept_engagement(args=[eid]).transact()
+    assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
+
     tx = counterparty_contract.submit_deliverable(
         args=[eid, [EVIDENCE_URL], "See the live page, it's the standard IANA example page."]
     ).transact()

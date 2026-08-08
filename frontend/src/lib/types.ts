@@ -1,5 +1,7 @@
 export const Status = {
   CREATED: 'created',
+  ACCEPTED: 'accepted',
+  DECLINED: 'declined',
   SUBMITTED: 'submitted',
   RELEASED: 'released',
   REJECTED: 'rejected',
@@ -36,6 +38,8 @@ export interface Engagement {
 
 export const STATUS_LABEL: Record<StatusValue, string> = {
   created: 'Created',
+  accepted: 'Accepted',
+  declined: 'Declined',
   submitted: 'Submitted',
   released: 'Released',
   rejected: 'Rejected',

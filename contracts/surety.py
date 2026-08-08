@@ -29,6 +29,8 @@ APPEAL_WINDOW_SECONDS = 3 * 24 * 60 * 60
 
 class Status:
     CREATED = "created"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
     SUBMITTED = "submitted"
     RELEASED = "released"
     REJECTED = "rejected"
@@ -70,6 +72,10 @@ class Surety(gl.Contract):
     engagements: TreeMap[u256, Engagement]
     all_ids: DynArray[u256]
     appeal_window_seconds: u256
+    # Global, not per-engagement: an address registers its comment-encryption
+    # public key once and it's reusable across every engagement that address
+    # is ever a party to.
+    pubkeys: TreeMap[Address, str]
 
     def __init__(self, appeal_window_seconds: int = APPEAL_WINDOW_SECONDS):
         # Configurable only so tests can deploy with a tiny window and prove
@@ -151,6 +157,35 @@ class Surety(gl.Contract):
         return int(engagement_id)
 
     # ------------------------------------------------------------------
+    # Flow A2 - counterparty accepts or declines before starting work
+    # ------------------------------------------------------------------
+
+    @gl.public.write
+    def accept_engagement(self, engagement_id: int) -> None:
+        eng = self._get(u256(engagement_id))
+        if gl.message.sender_address != eng.counterparty:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Only the counterparty may accept")
+        self._require_status(eng, (Status.CREATED,), "accept")
+        eng.status = Status.ACCEPTED
+        self._save(eng)
+
+    @gl.public.write
+    def decline_engagement(self, engagement_id: int, reason: str) -> None:
+        eng = self._get(u256(engagement_id))
+        if gl.message.sender_address != eng.counterparty:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Only the counterparty may decline")
+        self._require_status(eng, (Status.CREATED,), "decline")
+        if not reason.strip():
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} A reason is required to decline")
+
+        if not eng.funds_released:
+            self._pay(eng.depositor, eng.amount)
+            eng.funds_released = True
+        eng.status = Status.DECLINED
+        eng.notes = reason.strip()
+        self._save(eng)
+
+    # ------------------------------------------------------------------
     # Flow B - submit deliverable
     # ------------------------------------------------------------------
 
@@ -162,8 +197,10 @@ class Surety(gl.Contract):
         # One shot only: once submitted, evidence can't be silently swapped
         # before anyone has judged it. Changing evidence after that point
         # goes through raise_dispute's additional_evidence instead, which is
-        # visible to both parties and re-triggers judgment explicitly.
-        self._require_status(eng, (Status.CREATED,), "submit")
+        # visible to both parties and re-triggers judgment explicitly. Also
+        # requires ACCEPTED, not just CREATED - the counterparty must accept
+        # the engagement before starting work (see accept_engagement).
+        self._require_status(eng, (Status.ACCEPTED,), "submit")
         if self._now() > eng.deadline:
             # Enforces the "deterministic refund" guarantee (Docs/marketing copy):
             # without this, a submission arriving after the deadline - even
@@ -326,7 +363,10 @@ Respond with strict JSON only, no other text:
     @gl.public.write
     def refund_expired(self, engagement_id: int) -> None:
         eng = self._get(u256(engagement_id))
-        if eng.status != Status.CREATED:
+        # CREATED (never accepted) or ACCEPTED (accepted but never
+        # submitted) - either way nothing was ever delivered, so the
+        # depositor gets the deposit back once the deadline passes.
+        if eng.status not in (Status.CREATED, Status.ACCEPTED):
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} Can only refund an expired engagement with no submission "
                 f"(current status '{eng.status}')"
@@ -360,8 +400,26 @@ Respond with strict JSON only, no other text:
         self._save(eng)
 
     # ------------------------------------------------------------------
+    # Flow H - comment-encryption public key registry (global, reusable
+    # across every engagement an address is ever a party to)
+    # ------------------------------------------------------------------
+
+    @gl.public.write
+    def register_pubkey(self, pubkey: str) -> None:
+        if not pubkey.strip():
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} pubkey must not be empty")
+        self.pubkeys[gl.message.sender_address] = pubkey.strip()
+
+    # ------------------------------------------------------------------
     # views
     # ------------------------------------------------------------------
+
+    @gl.public.view
+    def get_pubkey(self, address: Address) -> str:
+        address = Address(address)
+        if address not in self.pubkeys:
+            return ""
+        return self.pubkeys[address]
 
     @gl.public.view
     def get_engagement(self, engagement_id: int) -> dict:

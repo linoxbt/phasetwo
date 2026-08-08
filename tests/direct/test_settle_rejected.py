@@ -37,6 +37,7 @@ def test_settle_rejected_blocks_from_submitted(direct_vm, direct_deploy, direct_
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
 
     direct_vm.sender = direct_bob
+    contract.accept_engagement(eid)
     contract.submit_deliverable(eid, ["https://example.com"], "notes")
 
     direct_vm.sender = direct_alice

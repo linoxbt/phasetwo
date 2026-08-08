@@ -25,6 +25,9 @@ def test_raise_dispute_appends_evidence_and_retriggers_judgment():
 
     eid = 1
 
+    tx = counterparty_contract.accept_engagement(args=[eid]).transact()
+    assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
+
     tx = counterparty_contract.submit_deliverable(
         args=[eid, [BAD_EVIDENCE_URL], "Here's the checkout page."]
     ).transact()

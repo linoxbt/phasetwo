@@ -30,11 +30,30 @@ def test_refund_expired_blocks_before_deadline(direct_vm, direct_deploy, direct_
         contract.refund_expired(eid)
 
 
+def test_refund_expired_allows_accepted_status_through_to_deadline_check(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    # Widened to cover ACCEPTED (not just CREATED) so a depositor can still
+    # be refunded if the counterparty accepted but never delivered - confirm
+    # the status guard itself no longer rejects 'accepted' (falls through to
+    # the deadline check instead, same as it already does for 'created').
+    contract = deploy_surety(direct_vm, direct_deploy)
+    eid = _create(contract, direct_vm, direct_alice, direct_bob, deadline_days=7)
+
+    direct_vm.sender = direct_bob
+    contract.accept_engagement(eid)
+
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("Deadline has not passed yet"):
+        contract.refund_expired(eid)
+
+
 def test_refund_expired_blocks_after_submission(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob, deadline_days=1)
 
     direct_vm.sender = direct_bob
+    contract.accept_engagement(eid)
     contract.submit_deliverable(eid, ["https://example.com"], "notes")
 
     direct_vm.sender = direct_alice

@@ -260,11 +260,12 @@ export function CreateEngagement() {
           {readyToReview ? (
             <div className="space-y-2 rounded-2xl border border-coral-500/20 bg-coral-500/[0.05] p-4 text-sm text-ink">
               <p>
-                You will lock <span className="font-semibold">{amount} GEN</span> in escrow. It releases to{' '}
-                <span className="font-mono">{shortAddress(counterparty)}</span> only if validators confirm{' '}
+                You will lock <span className="font-semibold">{amount} GEN</span> in escrow.{' '}
+                <span className="font-mono">{shortAddress(counterparty)}</span> must accept before they can start -
+                it releases to them only if validators confirm{' '}
                 <span className="font-semibold">&ldquo;{title.trim()}&rdquo;</span> is delivered by{' '}
                 <span className="font-semibold">{deadlineUnix ? formatUnixDateUTC(deadlineUnix) : new Date(deadline).toLocaleString()}</span>
-                . If nothing is submitted by the deadline, it refunds to you automatically.
+                . If they decline, or nothing is submitted by the deadline, it refunds to you automatically.
               </p>
               <p className="text-ink-soft">
                 <span className="font-medium text-ink">Verified by:</span>{' '}
