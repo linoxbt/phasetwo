@@ -6,7 +6,6 @@ import { formatEther } from 'viem'
 import { useWallet } from '../lib/wallet'
 import {
   getEngagement,
-  listEngagementsFor,
   acceptEngagement,
   declineEngagement,
   submitDeliverable,
@@ -19,10 +18,10 @@ import {
   getPubkey,
 } from '../lib/surety'
 import { getReadClient } from '../lib/genlayer-client'
-import { mapWithConcurrency } from '../lib/concurrency'
 import { getLastJudgmentTx } from '../lib/judgmentTx'
-import { deriveKeypair, ensureRegistered, encryptComment, tryDecryptComment, type CommentKeypair } from '../lib/commentCrypto'
+import { deriveKeypair, ensureRegistered, encryptComment, tryDecryptComment, useSecureMessaging } from '../lib/commentCrypto'
 import { AddressReputation } from '../components/AddressReputation'
+import { MilestonePlanCard } from '../components/MilestonePlanCard'
 import { withRetry } from '../lib/retry'
 import { useNetwork, getActiveChain } from '../lib/network'
 import { markSeen } from '../lib/activity'
@@ -52,6 +51,7 @@ export function EngagementDetail() {
   const [isJudging, setIsJudging] = useState(false)
   const [canAppeal, setCanAppeal] = useState(false)
   const [appealWindowSeconds, setAppealWindowSeconds] = useState<number | null>(null)
+  const [suggestingChange, setSuggestingChange] = useState(false)
 
   // Protocol-level appeals only exist where the chain configures an appeals
   // contract (Asimov Testnet) - Studio Network has none, and genlayer-js's
@@ -257,6 +257,8 @@ export function EngagementDetail() {
         engagementId={eng.id}
         depositor={eng.depositor}
         counterparty={eng.counterparty}
+        forceSuggestion={suggestingChange}
+        onSuggestionConsumed={() => setSuggestingChange(false)}
         onSettled={(ok) => {
           if (ok) refresh()
         }}
@@ -270,6 +272,10 @@ export function EngagementDetail() {
           provider={provider}
           engagementId={eng.id}
           onSettled={(ok) => onSettled(ok)}
+          onSuggestChange={() => {
+            setSuggestingChange(true)
+            document.getElementById('comment-compose')?.scrollIntoView({ behavior: 'smooth' })
+          }}
         />
       )}
 
@@ -389,68 +395,6 @@ export function EngagementDetail() {
   )
 }
 
-/** Shows when this engagement is part of a milestone plan (its own
- * parent_id is set, or another engagement links to it as parent) - siblings
- * share depositor+counterparty, so listing the depositor's engagements and
- * filtering client-side finds them without any new contract method. */
-function MilestonePlanCard({ engagement }: { engagement: Engagement }) {
-  const network = useNetwork()
-  const [siblings, setSiblings] = useState<Engagement[] | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    setSiblings(null)
-    ;(async () => {
-      try {
-        const ids = await listEngagementsFor(engagement.depositor)
-        const items = await mapWithConcurrency(ids, 1, getEngagement)
-        const rootId = engagement.parent_id || engagement.id
-        const plan = items.filter((e) => e.id === rootId || e.parent_id === rootId)
-        if (!cancelled) setSiblings(plan.length > 1 ? plan.sort((a, b) => a.id - b.id) : null)
-      } catch {
-        if (!cancelled) setSiblings(null)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [engagement.depositor, engagement.id, engagement.parent_id, network])
-
-  if (!siblings) return null
-
-  const releasedCount = siblings.filter((s) => s.status === 'released').length
-  const releasedTotal = siblings.filter((s) => s.status === 'released').reduce((sum, s) => sum + BigInt(s.amount), 0n)
-  const grandTotal = siblings.reduce((sum, s) => sum + BigInt(s.amount), 0n)
-
-  return (
-    <Card className="mt-8 p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-soft">Milestone plan</h2>
-        <span className="text-xs text-ink-soft">
-          {releasedCount}/{siblings.length} released &middot; {formatGen(releasedTotal)} of {formatGen(grandTotal)}
-        </span>
-      </div>
-      <ul className="space-y-2">
-        {siblings.map((s) => (
-          <li key={s.id} className="flex items-center justify-between gap-3 text-sm">
-            {s.id === engagement.id ? (
-              <span className="font-medium text-ink">#{s.id} - {splitTitle(s.deliverable_spec).title} (this one)</span>
-            ) : (
-              <Link to={`/app/engagement/${s.id}`} className="text-coral-600 underline hover:text-coral-700">
-                #{s.id} - {splitTitle(s.deliverable_spec).title}
-              </Link>
-            )}
-            <span className="flex shrink-0 items-center gap-2">
-              <span className="text-xs text-ink-soft">{formatGen(s.amount)}</span>
-              <StatusBadge status={s.status} />
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Card>
-  )
-}
-
 function Timeline({ status, judging = false }: { status: StatusValue; judging?: boolean }) {
   // "judging" isn't a real on-chain status - request_release runs judgment
   // synchronously and the contract only ever lands on submitted/disputed
@@ -527,6 +471,8 @@ function CommentThread({
   engagementId,
   depositor,
   counterparty,
+  forceSuggestion = false,
+  onSuggestionConsumed,
   onSettled,
 }: {
   comments: Comment[]
@@ -536,6 +482,8 @@ function CommentThread({
   engagementId: number
   depositor: `0x${string}`
   counterparty: `0x${string}`
+  forceSuggestion?: boolean
+  onSuggestionConsumed?: () => void
   onSettled: (ok: boolean) => void
 }) {
   const [text, setText] = useState('')
@@ -543,8 +491,7 @@ function CommentThread({
   const [hash, setHash] = useState<`0x${string}` | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [keypair, setKeypair] = useState<CommentKeypair | null>(null)
-  const [unlocking, setUnlocking] = useState(false)
+  const { keypair, unlocking, unlock } = useSecureMessaging(address, provider)
   const [depositorPubkey, setDepositorPubkey] = useState<string | null>(null)
   const [counterpartyPubkey, setCounterpartyPubkey] = useState<string | null>(null)
   const [pubkeysLoaded, setPubkeysLoaded] = useState(false)
@@ -570,22 +517,11 @@ function CommentThread({
     }
   }, [depositor, counterparty, engagementId])
 
-  async function unlock() {
-    if (!address || !provider) return
-    setUnlocking(true)
-    setError(null)
-    try {
-      const kp = await deriveKeypair(address, provider)
-      await ensureRegistered(address, provider, kp)
-      setKeypair(kp)
-      if (viewerRole === 'depositor') setDepositorPubkey(kp.publicKeyBase64)
-      if (viewerRole === 'counterparty') setCounterpartyPubkey(kp.publicKeyBase64)
-    } catch (err: any) {
-      setError(err?.message ?? 'Could not enable secure messaging')
-    } finally {
-      setUnlocking(false)
-    }
-  }
+  useEffect(() => {
+    if (!keypair) return
+    if (viewerRole === 'depositor') setDepositorPubkey(keypair.publicKeyBase64)
+    if (viewerRole === 'counterparty') setCounterpartyPubkey(keypair.publicKeyBase64)
+  }, [keypair, viewerRole])
 
   const otherPartyPubkey = viewerRole === 'depositor' ? counterpartyPubkey : depositorPubkey
 
@@ -627,6 +563,11 @@ function CommentThread({
               </div>
               {decoded ? (
                 <>
+                  {decoded.kind === 'suggestion' && (
+                    <span className="label-mono mb-1 inline-block rounded-full bg-coral-100 px-2 py-0.5 text-[9px] text-coral-700">
+                      Suggested change
+                    </span>
+                  )}
                   <p className="whitespace-pre-wrap text-sm text-ink">{decoded.plaintext}</p>
                   {!decoded.encrypted && <p className="mt-1 text-[10px] text-amber-600">Posted unencrypted</p>}
                 </>
@@ -648,8 +589,19 @@ function CommentThread({
             </p>
           ) : (
             <>
-              <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a comment..." rows={2} />
-              <div className="mt-2">
+              {forceSuggestion && (
+                <p className="mb-1.5 text-xs font-medium text-coral-600">
+                  Posting as a suggested change - the depositor can review it and recreate the engagement if they
+                  agree.
+                </p>
+              )}
+              <Textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={forceSuggestion ? "Describe what you'd want changed..." : 'Add a comment...'}
+                rows={2}
+              />
+              <div className="mt-2 flex items-center gap-3">
                 <Button
                   size="sm"
                   variant="secondary"
@@ -662,7 +614,12 @@ function CommentThread({
                     setBusy(true)
                     setError(null)
                     try {
-                      const envelope = encryptComment(text.trim(), depositorPubkey!, counterpartyPubkey!)
+                      const envelope = encryptComment(
+                        text.trim(),
+                        depositorPubkey!,
+                        counterpartyPubkey!,
+                        forceSuggestion ? 'suggestion' : undefined,
+                      )
                       const h = (await addComment(address, provider, engagementId, envelope)) as `0x${string}`
                       setHash(h)
                     } catch (err: any) {
@@ -671,8 +628,18 @@ function CommentThread({
                     }
                   }}
                 >
-                  Post Comment
+                  {forceSuggestion ? 'Post Suggestion' : 'Post Comment'}
                 </Button>
+                {forceSuggestion && (
+                  <button
+                    type="button"
+                    onClick={onSuggestionConsumed}
+                    disabled={busy}
+                    className="text-xs text-ink-soft hover:text-ink"
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -683,7 +650,10 @@ function CommentThread({
                 hash={hash}
                 onSettled={(ok) => {
                   setBusy(false)
-                  if (ok) setText('')
+                  if (ok) {
+                    setText('')
+                    onSuggestionConsumed?.()
+                  }
                   setHash(null)
                   onSettled(ok)
                 }}
@@ -862,11 +832,13 @@ function AcceptDeclineActions({
   provider,
   engagementId,
   onSettled,
+  onSuggestChange,
 }: {
   address: `0x${string}`
   provider: EIP1193Provider
   engagementId: number
   onSettled: (ok: boolean) => void
+  onSuggestChange: () => void
 }) {
   const [declining, setDeclining] = useState(false)
   const [reason, setReason] = useState('')
@@ -918,11 +890,7 @@ function AcceptDeclineActions({
           <Button variant="secondary" onClick={() => setDeclining(true)} disabled={busy}>
             Decline
           </Button>
-          <Button
-            variant="ghost"
-            disabled={busy}
-            onClick={() => document.getElementById('comment-compose')?.scrollIntoView({ behavior: 'smooth' })}
-          >
+          <Button variant="ghost" disabled={busy} onClick={onSuggestChange}>
             Suggest changes instead
           </Button>
         </div>

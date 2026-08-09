@@ -203,3 +203,40 @@ export function IconChartBar(props: SVGProps<SVGSVGElement>) {
     </svg>
   )
 }
+
+export function IconGrid(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="4" y="4" width="7" height="7" rx="1.4" />
+      <rect x="13" y="4" width="7" height="7" rx="1.4" />
+      <rect x="4" y="13" width="7" height="7" rx="1.4" />
+      <rect x="13" y="13" width="7" height="7" rx="1.4" />
+    </svg>
+  )
+}
+
+export function IconBell(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5Z" />
+      <path d="M10 19.5a2 2 0 0 0 4 0" />
+    </svg>
+  )
+}
+
+export function IconFlag(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 3v18" />
+      <path d="M6 4.5c2-1.2 4-1.2 6 0s4 1.2 6 0v9c-2 1.2-4 1.2-6 0s-4-1.2-6 0Z" />
+    </svg>
+  )
+}
+
+export function IconChatBubble(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 5.5h16v11H10l-4 3.5v-3.5H4Z" />
+    </svg>
+  )
+}

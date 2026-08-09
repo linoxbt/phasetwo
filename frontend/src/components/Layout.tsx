@@ -4,10 +4,22 @@ import { WalletButton } from './WalletButton'
 import { Logo, LogoMark } from './Logo'
 import { NetworkBanner } from './NetworkBanner'
 import { NetworkSwitcher } from './NetworkSwitcher'
-import { IconMenu, IconClose, IconList, IconPlus, IconBook, IconChartBar, IconSidebar } from './icons'
+import {
+  IconMenu,
+  IconClose,
+  IconList,
+  IconPlus,
+  IconBook,
+  IconChartBar,
+  IconSidebar,
+  IconGrid,
+  IconBell,
+  IconFlag,
+  IconChatBubble,
+} from './icons'
 import { useWallet } from '../lib/wallet'
 import { listEngagementsFor, getEngagement } from '../lib/surety'
-import { getUnseenChanges } from '../lib/activity'
+import { getUnseenChanges, logNotification } from '../lib/activity'
 import { mapWithConcurrency } from '../lib/concurrency'
 import { useNetwork } from '../lib/network'
 import { STATUS_LABEL, type StatusValue } from '../lib/types'
@@ -20,6 +32,10 @@ const NAV_LINKS = [
   { to: '/stats', label: 'Transparency', icon: IconChartBar },
   { to: '/app', label: 'My Engagements', icon: IconList },
   { to: '/app/create', label: 'Create Engagement', icon: IconPlus },
+  { to: '/app/templates', label: 'Templates', icon: IconGrid },
+  { to: '/app/milestones', label: 'Milestones', icon: IconFlag },
+  { to: '/app/negotiate', label: 'Negotiate', icon: IconChatBubble },
+  { to: '/app/notifications', label: 'Notifications', icon: IconBell },
   { to: '/docs', label: 'Docs', icon: IconBook },
 ]
 
@@ -80,6 +96,7 @@ export function Layout() {
           const key = `${c.id}:${c.status}:${Date.now()}`
           setToasts((prev) => [...prev, { key, message }])
           setTimeout(() => setToasts((prev) => prev.filter((t) => t.key !== key)), TOAST_LIFETIME_MS)
+          logNotification(address!, { engagementId: c.id, title, status: c.status, timestamp: Date.now() })
 
           if (notificationsSupported && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
             try {
@@ -113,7 +130,7 @@ export function Layout() {
   // MyEngagements.tsx/EngagementDetail.tsx) - clear the badge/title the
   // moment that happens rather than waiting for the next poll tick.
   useEffect(() => {
-    if (location.pathname === '/app') setUnseenCount(0)
+    if (location.pathname === '/app' || location.pathname === '/app/notifications') setUnseenCount(0)
   }, [location.pathname])
 
   useEffect(() => {
@@ -187,7 +204,7 @@ export function Layout() {
               >
                 <span className="relative shrink-0">
                   <l.icon width={18} height={18} />
-                  {l.to === '/app' && unseenCount > 0 && (
+                  {l.to === '/app/notifications' && unseenCount > 0 && (
                     <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-coral-500" />
                   )}
                 </span>

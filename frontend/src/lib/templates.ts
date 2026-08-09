@@ -7,6 +7,18 @@ export interface EngagementTemplate {
   deliveryMethod: string
 }
 
+/** Shape passed via router state to /app/create from anywhere that wants to
+ * pre-fill the form: a template card's "Use this template", or
+ * EngagementDetail.tsx's "Recreate this engagement with new terms". */
+export interface Prefill {
+  counterparty?: string
+  title?: string
+  description?: string
+  verificationCriteria?: string
+  deliveryMethod?: string
+  amount?: string
+}
+
 export const ENGAGEMENT_TEMPLATES: EngagementTemplate[] = [
   {
     id: 'bug-fix',

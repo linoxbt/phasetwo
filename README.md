@@ -68,6 +68,10 @@ React 19 + TypeScript + Vite + Tailwind CSS v4, wallet connection via Reown AppK
 - **Create Engagement** (`/app/create`) — new engagement form, with spec templates and an optional milestone plan (split the deposit into installments, each its own independent engagement)
 - **Engagement Detail** (`/app/engagement/:id`) — full lifecycle actions: accept/decline, submit, request release, dispute, refund, appeal, plus a private comment thread and, for milestones, sibling progress
 - **Profile** (`/app/profile/:address`) — an address's public track record (approval/dispute rates), also shown inline on Create and Detail pages before you engage with someone
+- **Templates** (`/app/templates`) — browse the full spec template library
+- **Milestones** (`/app/milestones`) — every milestone plan you're a party to, with per-plan progress
+- **Negotiate** (`/app/negotiate`) — an inbox of every "suggest changes" comment you've sent or received, across all engagements
+- **Notifications** (`/app/notifications`) — history of status changes on your engagements, stored on-device
 - **Transparency** (`/stats`) — public, wallet-free aggregate stats read directly from the contract
 - **Docs** (`/docs`) — in-app protocol reference
 

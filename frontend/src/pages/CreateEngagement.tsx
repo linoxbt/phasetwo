@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useWallet } from '../lib/wallet'
 import { createEngagement, listEngagementsFor } from '../lib/surety'
 import { TxStatus } from '../components/TxStatus'
@@ -9,21 +9,12 @@ import { Card } from '../components/ui/Card'
 import { EmptyState, EmptyIcon } from '../components/ui/EmptyState'
 import { FAUCET_URL } from '../lib/faucet'
 import { shortAddress, formatUnixDateUTC } from '../lib/format'
-import { ENGAGEMENT_TEMPLATES } from '../lib/templates'
+import { ENGAGEMENT_TEMPLATES, type Prefill } from '../lib/templates'
 import { AddressReputation } from '../components/AddressReputation'
 
 const DELIVERY_METHODS = ['URL', 'GitHub repository', 'IPFS / Arweave', 'File', 'Text response', 'Other'] as const
 const selectClass =
   'w-full rounded-xl border border-ink/12 bg-paper px-4 py-2.5 text-sm text-ink transition-colors focus:border-coral-500/60 focus:outline-none focus:ring-2 focus:ring-coral-500/15'
-
-interface Prefill {
-  counterparty?: string
-  title?: string
-  description?: string
-  verificationCriteria?: string
-  deliveryMethod?: string
-  amount?: string
-}
 
 export function CreateEngagement() {
   const { address, provider, connect } = useWallet()
@@ -315,7 +306,11 @@ export function CreateEngagement() {
               ))}
             </div>
             <p className="mt-1.5 text-xs text-ink-soft">
-              Fills in the fields below with a starting point - everything stays editable.
+              Fills in the fields below with a starting point - everything stays editable.{' '}
+              <Link to="/app/templates" className="text-coral-600 underline hover:text-coral-700">
+                Browse all templates
+              </Link>
+              .
             </p>
           </div>
 

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { encrypt as ethEncrypt, type EthEncryptedData } from '@metamask/eth-sig-util'
 import nacl from 'tweetnacl'
 import { base64, hex, utf8 } from '@scure/base'
@@ -23,9 +24,13 @@ export interface CommentKeypair {
 export interface CommentEnvelope {
   depositor: EthEncryptedData
   counterparty: EthEncryptedData
+  // Optional tag for comments posted via "Suggest changes instead" - lets
+  // the Negotiate inbox (/app/negotiate) find them across every engagement
+  // without any new contract state. Absent on regular comments.
+  kind?: 'suggestion'
 }
 
-export type DecodedComment = { plaintext: string; encrypted: boolean }
+export type DecodedComment = { plaintext: string; encrypted: boolean; kind?: 'suggestion' }
 
 async function sha256(data: Uint8Array): Promise<Uint8Array> {
   const digest = await crypto.subtle.digest('SHA-256', data as BufferSource)
@@ -66,10 +71,16 @@ export async function ensureRegistered(
   }
 }
 
-export function encryptComment(text: string, depositorPubkey: string, counterpartyPubkey: string): string {
+export function encryptComment(
+  text: string,
+  depositorPubkey: string,
+  counterpartyPubkey: string,
+  kind?: 'suggestion',
+): string {
   const envelope: CommentEnvelope = {
     depositor: ethEncrypt({ publicKey: depositorPubkey, data: text, version: VERSION }),
     counterparty: ethEncrypt({ publicKey: counterpartyPubkey, data: text, version: VERSION }),
+    ...(kind ? { kind } : {}),
   }
   return JSON.stringify(envelope)
 }
@@ -94,6 +105,7 @@ function decryptWithSecretKey(secretKeyHex: string, blob: EthEncryptedData): str
 function isEnvelope(value: unknown): value is CommentEnvelope {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
+  if (v.kind !== undefined && v.kind !== 'suggestion') return false
   return isEncryptedBlob(v.depositor) && isEncryptedBlob(v.counterparty)
 }
 
@@ -116,8 +128,36 @@ export function tryDecryptComment(
   try {
     const parsed: unknown = JSON.parse(rawText)
     if (!isEnvelope(parsed)) throw new Error('not an envelope')
-    return { plaintext: decryptWithSecretKey(secretKeyHex, parsed[role]), encrypted: true }
+    return { plaintext: decryptWithSecretKey(secretKeyHex, parsed[role]), encrypted: true, kind: parsed.kind }
   } catch {
     return { plaintext: rawText, encrypted: false }
   }
+}
+
+/** Shared "sign to unlock secure messaging" flow - CommentThread and the
+ * Negotiate inbox both need the exact same derive-key/register/hold-in-
+ * memory sequence. */
+export function useSecureMessaging(address: `0x${string}` | null, provider: EIP1193Provider | null) {
+  const [keypair, setKeypair] = useState<CommentKeypair | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function unlock(): Promise<CommentKeypair | null> {
+    if (!address || !provider) return null
+    setUnlocking(true)
+    setError(null)
+    try {
+      const kp = await deriveKeypair(address, provider)
+      await ensureRegistered(address, provider, kp)
+      setKeypair(kp)
+      return kp
+    } catch (err: any) {
+      setError(err?.message ?? 'Could not enable secure messaging')
+      return null
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
+  return { keypair, unlocking, error, unlock }
 }
