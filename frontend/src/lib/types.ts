@@ -3,6 +3,7 @@ export const Status = {
   ACCEPTED: 'accepted',
   DECLINED: 'declined',
   SUBMITTED: 'submitted',
+  APPROVED: 'approved',
   RELEASED: 'released',
   REJECTED: 'rejected',
   DISPUTED: 'disputed',
@@ -35,6 +36,8 @@ export interface Engagement {
   comments: Comment[]
   rejected_at: number
   parent_id: number
+  allowed_evidence_prefix: string
+  approved_at: number
 }
 
 export const STATUS_LABEL: Record<StatusValue, string> = {
@@ -42,6 +45,7 @@ export const STATUS_LABEL: Record<StatusValue, string> = {
   accepted: 'Accepted',
   declined: 'Declined',
   submitted: 'Submitted',
+  approved: 'Approved',
   released: 'Released',
   rejected: 'Rejected',
   disputed: 'Disputed',

@@ -22,8 +22,11 @@ def test_raise_dispute_requires_terminal_status(direct_vm, direct_deploy, direct
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
 
-    # Still status=created here — raise_dispute is only valid from rejected/released,
-    # which are only reachable via request_release's LLM judgment (integration tests).
+    # Still status=created here — raise_dispute is only valid from
+    # rejected/approved, which are only reachable via request_release's LLM
+    # judgment (integration tests). Same applies to the evidence-prefix-binding
+    # check inside raise_dispute - unreachable in direct mode for the same
+    # reason, covered by tests/integration/test_settle_approved_integration.py.
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("Cannot dispute in status 'created'"):
         contract.raise_dispute(eid, [], "not happy")

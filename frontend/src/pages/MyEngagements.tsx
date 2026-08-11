@@ -22,6 +22,7 @@ const STATUS_FILTERS: Array<StatusValue | 'all'> = [
   'accepted',
   'declined',
   'submitted',
+  'approved',
   'released',
   'rejected',
   'disputed',

@@ -61,6 +61,8 @@ def test_raise_dispute_appends_evidence_and_retriggers_judgment():
     )
     assert tx_execution_succeeded(tx), f"second request_release failed: {tx}"
 
+    # A "met" verdict now lands on "approved" (not paid out yet, appeal
+    # window open) rather than "released" - see test_release_approval.py.
     eng = contract.get_engagement(args=[eid]).call()
-    assert eng["status"] in ("released", "rejected"), f"unexpected status after re-judgment: {eng['status']}"
+    assert eng["status"] in ("approved", "rejected"), f"unexpected status after re-judgment: {eng['status']}"
     assert eng["decision_reasoning"].strip() != ""

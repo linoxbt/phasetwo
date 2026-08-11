@@ -13,6 +13,7 @@ import {
   raiseDispute,
   refundExpired,
   settleRejected,
+  settleApproved,
   getAppealWindowSeconds,
   addComment,
   getPubkey,
@@ -93,7 +94,7 @@ export function EngagementDetail() {
   // judgment themselves - not just the browser session that just ran it.
   useEffect(() => {
     if (!eng || !chainSupportsAppeals) return
-    if (!['rejected', 'disputed', 'released'].includes(eng.status)) return
+    if (!['rejected', 'disputed', 'approved', 'released'].includes(eng.status)) return
     let cancelled = false
     getLastJudgmentTx(eng.id).then((hash) => {
       if (!cancelled && hash) setLastReleaseTx(hash)
@@ -146,6 +147,10 @@ export function EngagementDetail() {
   const rejectedWindow =
     eng.status === 'rejected' && appealWindowSeconds !== null
       ? appealWindowStatus(eng.rejected_at, appealWindowSeconds)
+      : null
+  const approvedWindow =
+    eng.status === 'approved' && appealWindowSeconds !== null
+      ? appealWindowStatus(eng.approved_at, appealWindowSeconds)
       : null
 
   return (
@@ -332,8 +337,30 @@ export function EngagementDetail() {
         />
       )}
 
-      {isParty && provider && eng.status === 'released' && (
-        <DisputeForm address={address!} provider={provider} engagementId={eng.id} onSettled={(ok) => onSettled(ok)} />
+      {eng.status === 'approved' && approvedWindow?.isOpen && (
+        <>
+          <p className="mt-6 text-sm text-ink-soft">
+            Validators found the deliverable met the spec. Appeal window closes{' '}
+            {formatUnixDate(approvedWindow.closesAt)} - if no dispute is raised by then, the deposit becomes
+            releasable to the counterparty. Either party can still dispute it until then.
+          </p>
+          {isParty && provider && (
+            <DisputeForm address={address!} provider={provider} engagementId={eng.id} onSettled={(ok) => onSettled(ok)} />
+          )}
+        </>
+      )}
+
+      {eng.status === 'approved' && approvedWindow && !approvedWindow.isOpen && provider && (
+        <ActionButton
+          label="Settle (release to counterparty)"
+          description="The appeal window has closed with no dispute raised. This permissionlessly finalizes the release to the counterparty."
+          onClick={async () => {
+            const hash = (await settleApproved(address!, provider, eng.id)) as `0x${string}`
+            setPendingTx(hash)
+            return hash
+          }}
+          onSettled={(ok) => onSettled(ok)}
+        />
       )}
 
       {eng.status === 'rejected' && rejectedWindow?.isOpen && (
@@ -417,7 +444,13 @@ function Timeline({ status, judging = false }: { status: StatusValue; judging?: 
     steps = ['created', 'expired']
     reachedCount = 2
   } else if (judgedTerminal.includes(status)) {
+    // 'released' skips showing 'approved' as its own waypoint here, same
+    // simplification 'refunded' already applies to skip 'rejected' - both
+    // are the settled version of an earlier verdict, not a new judgment.
     steps = ['created', 'accepted', 'submitted', 'judging', status]
+    reachedCount = 5
+  } else if (status === 'approved') {
+    steps = ['created', 'accepted', 'submitted', 'judging', 'approved']
     reachedCount = 5
   } else if (isActivelyJudgingDispute) {
     steps = ['created', 'accepted', 'submitted', 'disputed', 'judging']

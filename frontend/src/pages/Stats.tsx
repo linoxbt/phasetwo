@@ -18,27 +18,30 @@ const STATUS_ORDER: StatusValue[] = [
   'accepted',
   'submitted',
   'disputed',
+  'approved',
   'released',
   'rejected',
   'declined',
   'expired',
   'refunded',
 ]
-const LOCKED_STATUSES: StatusValue[] = ['created', 'accepted', 'submitted', 'disputed', 'rejected']
+const LOCKED_STATUSES: StatusValue[] = ['created', 'accepted', 'submitted', 'disputed', 'approved', 'rejected']
 const REFUNDED_STATUSES: StatusValue[] = ['declined', 'expired', 'refunded']
 
 // Status is a fixed, reserved palette (good/warning/critical/neutral), not an
 // open categorical set - kept identical to StatusBadge.tsx's mapping
 // everywhere else in the app so a segment here always means the same color
 // it does on a badge. In-progress states step through a neutral ramp;
-// released is the one "good" outcome; rejected is the one "critical" one;
-// disputed is the contested/warning state; the three ways an engagement
-// closes without payment share a single muted tone.
+// approved/released are the "good" outcome (still locked vs. finally paid);
+// rejected is the one "critical" one; disputed is the contested/warning
+// state; the three ways an engagement closes without payment share a single
+// muted tone.
 const STATUS_FILL: Record<StatusValue, string> = {
   created: 'bg-ink/25',
   accepted: 'bg-sky-400',
   submitted: 'bg-violet-400',
   disputed: 'bg-coral-400',
+  approved: 'bg-emerald-300',
   released: 'bg-emerald-400',
   rejected: 'bg-red-400',
   declined: 'bg-ink/12',
@@ -147,11 +150,12 @@ export function Stats() {
   const totalRefunded = sumWhere(REFUNDED_STATUSES)
   const totalVolume = totalReleased + totalLocked + totalRefunded
 
-  // "refunded" engagements were rejected first, so they count as judged too -
-  // otherwise a settled rejection would silently vanish from these rates the
-  // moment its appeal window closes.
-  const judged = counts.released + counts.rejected + counts.disputed + counts.refunded
-  const approvalRate = judged > 0 ? Math.round((counts.released / judged) * 100) : null
+  // "refunded" engagements were rejected first, and "released" ones were
+  // approved first, so both count as judged too - otherwise a settled
+  // engagement would silently vanish from these rates the moment its appeal
+  // window closes and it moves off "approved"/"rejected".
+  const judged = counts.approved + counts.released + counts.rejected + counts.disputed + counts.refunded
+  const approvalRate = judged > 0 ? Math.round(((counts.approved + counts.released) / judged) * 100) : null
 
   const uniqueParticipants = new Set(
     (engagements ?? []).flatMap((e) => [e.depositor.toLowerCase(), e.counterparty.toLowerCase()]),

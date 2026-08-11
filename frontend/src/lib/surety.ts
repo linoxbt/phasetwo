@@ -45,12 +45,13 @@ export async function createEngagement(
   deadlineUnixSeconds: number,
   genAmount: string,
   parentId = 0,
+  allowedEvidencePrefix = '',
 ) {
   const client = createWriteClient(account, provider)
   return client.writeContract({
     address: getContractAddress(),
     functionName: 'create_engagement',
-    args: [counterparty, deliverableSpec, deadlineUnixSeconds, parentId],
+    args: [counterparty, deliverableSpec, deadlineUnixSeconds, parentId, allowedEvidencePrefix],
     value: parseEther(genAmount),
   })
 }
@@ -137,6 +138,16 @@ export async function settleRejected(account: `0x${string}`, provider: EIP1193Pr
   return client.writeContract({
     address: getContractAddress(),
     functionName: 'settle_rejected',
+    args: [engagementId],
+    value: 0n,
+  })
+}
+
+export async function settleApproved(account: `0x${string}`, provider: EIP1193Provider, engagementId: number) {
+  const client = createWriteClient(account, provider)
+  return client.writeContract({
+    address: getContractAddress(),
+    functionName: 'settle_approved',
     args: [engagementId],
     value: 0n,
   })

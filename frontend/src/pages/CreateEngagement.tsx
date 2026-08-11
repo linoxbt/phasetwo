@@ -38,6 +38,7 @@ export function CreateEngagement() {
   )
   const [deadline, setDeadline] = useState('')
   const [amount, setAmount] = useState(prefill?.amount ?? '')
+  const [allowedEvidencePrefix, setAllowedEvidencePrefix] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -97,7 +98,16 @@ export function CreateEngagement() {
     try {
       const row = milestoneRows[index]
       const spec = buildSpec(row.label)
-      const hash = await createEngagement(address, provider, counterparty as `0x${string}`, spec, deadlineUnix, row.amount, rootId ?? 0)
+      const hash = await createEngagement(
+        address,
+        provider,
+        counterparty as `0x${string}`,
+        spec,
+        deadlineUnix,
+        row.amount,
+        rootId ?? 0,
+        allowedEvidencePrefix.trim(),
+      )
       setMilestoneHash(hash as `0x${string}`)
     } catch (err: any) {
       setFormError(err?.message ?? 'Failed to submit transaction')
@@ -205,7 +215,16 @@ export function CreateEngagement() {
     setSubmitting(true)
     try {
       const spec = buildSpec()
-      const hash = await createEngagement(address, provider, counterparty as `0x${string}`, spec, deadlineUnix, amount)
+      const hash = await createEngagement(
+        address,
+        provider,
+        counterparty as `0x${string}`,
+        spec,
+        deadlineUnix,
+        amount,
+        0,
+        allowedEvidencePrefix.trim(),
+      )
       setTxHash(hash as `0x${string}`)
     } catch (err: any) {
       setFormError(err?.message ?? 'Failed to submit transaction')
@@ -372,6 +391,21 @@ export function CreateEngagement() {
             )}
             <p className="mt-1.5 text-xs text-ink-soft">
               Informational for now - the counterparty attaches the actual evidence link when they submit.
+            </p>
+          </div>
+
+          <div>
+            <Label>Restrict acceptable evidence to (optional)</Label>
+            <Input
+              type="text"
+              value={allowedEvidencePrefix}
+              onChange={(e) => setAllowedEvidencePrefix(e.target.value)}
+              placeholder="e.g. https://github.com/your-org/your-repo"
+            />
+            <p className="mt-1.5 text-xs text-ink-soft">
+              If set, every evidence URL the counterparty submits (initially or in a dispute) must start with
+              this - locks in what counts as valid evidence before any work begins, instead of trusting whatever
+              link shows up later. Leave blank to accept any URL.
             </p>
           </div>
         </Section>

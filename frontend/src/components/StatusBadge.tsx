@@ -5,6 +5,7 @@ const STYLES: Record<StatusValue, string> = {
   accepted: 'bg-sky-100 text-sky-700',
   declined: 'bg-ink/5 text-ink-soft/70',
   submitted: 'bg-violet-100 text-violet-700',
+  approved: 'bg-sky-100 text-sky-700',
   released: 'bg-emerald-100 text-emerald-700',
   rejected: 'bg-red-100 text-red-700',
   disputed: 'bg-coral-100 text-coral-700',

@@ -138,15 +138,17 @@ export function Docs() {
                 trusted at face value. Judgment typically completes in under a minute; occasionally longer if a
                 validator round needs a retry.
               </Step>
-              <Step n={5} title="Release, or dispute">
-                A pass releases funds to the counterparty immediately. A rejection opens a 3-day appeal window;
-                either party can raise a dispute with additional evidence, then request judgment again, or
-                escalate through GenLayer&apos;s protocol-level appeal (Asimov Testnet only).
+              <Step n={5} title="Approved, or rejected - either way, not final yet">
+                A pass doesn&apos;t pay out on the spot. It opens the same kind of 3-day appeal window a
+                rejection does; either party can still raise a dispute with additional evidence during it, then
+                request judgment again, or escalate through GenLayer&apos;s protocol-level appeal (Asimov Testnet
+                only). This is deliberate - see <Code>Can a dispute actually reverse a payout?</Code> below.
               </Step>
-              <Step n={6} title="Settle a final rejection">
-                If the appeal window closes with no dispute raised, anyone can permissionlessly finalize it -
-                the deposit refunds to the depositor. This is the terminal path: a rejected engagement can never
-                sit stuck forever.
+              <Step n={6} title="Settle">
+                Once the appeal window closes on either an approval or a rejection with no dispute raised, anyone
+                can permissionlessly finalize it - the deposit moves to the counterparty (approval) or back to
+                the depositor (rejection). Nothing can sit stuck forever, and nothing moves before its window
+                closes uncontested.
               </Step>
             </ol>
           </Section>
@@ -200,14 +202,19 @@ export function Docs() {
                 <Code>submitted</Code> - evidence is in; anyone can trigger validator judgment.
               </li>
               <li>
-                <Code>released</Code> - validators passed the deliverable; funds paid to the counterparty.
+                <Code>approved</Code> - validators passed the deliverable; a 3-day appeal window opens before
+                anything is paid.
               </li>
               <li>
                 <Code>rejected</Code> - validators failed the deliverable; a 3-day appeal window opens.
               </li>
               <li>
-                <Code>disputed</Code> - a party added evidence and re-triggered judgment after a rejection or a
-                release.
+                <Code>disputed</Code> - a party added evidence and re-triggered judgment after an approval or a
+                rejection.
+              </li>
+              <li>
+                <Code>released</Code> - an approval&apos;s appeal window closed with no dispute raised; deposit
+                paid to the counterparty. The only terminal, funds-moved state on the pass side.
               </li>
               <li>
                 <Code>expired</Code> - the deadline passed with nothing submitted, whether from <Code>created</Code>{' '}
@@ -223,8 +230,15 @@ export function Docs() {
           <Section id="contract" title="Contract reference">
             <p>Public methods on the deployed Intelligent Contract:</p>
             <div className="space-y-4">
-              <Method name="create_engagement" args="counterparty, deliverable_spec, deadline" note="Write · payable">
-                Locks the sent value as the deposit and opens a new engagement.
+              <Method
+                name="create_engagement"
+                args="counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix=&quot;&quot;"
+                note="Write · payable"
+              >
+                Locks the sent value as the deposit and opens a new engagement. An optional{' '}
+                <Code>allowed_evidence_prefix</Code> binds every evidence URL - the initial submission and any
+                dispute&apos;s additional evidence - to that prefix, committed to before any work begins: a repo
+                URL, an <Code>ipfs://</Code> reference, a specific domain. Left empty, evidence is unrestricted.
               </Method>
               <Method name="accept_engagement" args="engagement_id" note="Write · counterparty only">
                 Accepts the engagement, unlocking <Code>submit_deliverable</Code>. Moves no funds.
@@ -235,18 +249,27 @@ export function Docs() {
               </Method>
               <Method name="submit_deliverable" args="engagement_id, evidence_urls, notes" note="Write · counterparty only, one-time">
                 Attaches evidence and moves the engagement to <Code>submitted</Code>. Requires the engagement to be{' '}
-                <Code>accepted</Code> first, and can only be called once - updating evidence after that goes through{' '}
-                <Code>raise_dispute</Code> instead.
+                <Code>accepted</Code> first, can only be called once, and every URL must match a bound{' '}
+                <Code>allowed_evidence_prefix</Code> if one was set at creation - updating evidence after that goes
+                through <Code>raise_dispute</Code> instead.
               </Method>
               <Method name="request_release" args="engagement_id" note="Write · triggers validator judgment">
-                Runs the validator comparison against the spec; releases or rejects based on consensus.
+                Runs the validator comparison against the spec; moves the engagement to <Code>approved</Code> or{' '}
+                <Code>rejected</Code> based on consensus. Neither outcome pays out yet - see{' '}
+                <Code>settle_approved</Code> / <Code>settle_rejected</Code>.
               </Method>
               <Method name="raise_dispute" args="engagement_id, evidence_urls, reason" note="Write · depositor or counterparty">
-                Appends evidence and increments the dispute round after a rejection or a release. Doesn&apos;t
-                re-run judgment itself - a subsequent <Code>request_release</Code> call does that.
+                Appends evidence (also subject to the bound evidence prefix, if any) and increments the dispute
+                round after an approval or a rejection. Doesn&apos;t re-run judgment itself - a subsequent{' '}
+                <Code>request_release</Code> call does that. Blocked once that status&apos;s appeal window has
+                closed.
               </Method>
               <Method name="refund_expired" args="engagement_id" note="Write · after deadline, status created or accepted">
                 Refunds the deposit to the depositor if nothing was ever submitted.
+              </Method>
+              <Method name="settle_approved" args="engagement_id" note="Write · permissionless, after the appeal window closes">
+                Finalizes an approved engagement with no dispute raised - pays the deposit to the counterparty.
+                This is the only way funds ever reach the counterparty.
               </Method>
               <Method name="settle_rejected" args="engagement_id" note="Write · permissionless, after the appeal window closes">
                 Finalizes a rejected engagement with no dispute raised - refunds the deposit to the depositor.
@@ -329,11 +352,17 @@ export function Docs() {
                 dispute with new evidence during it, but once it closes, anyone can permissionlessly call{' '}
                 <Code>settle_rejected</Code> to refund the deposit back to the depositor.
               </Concept>
-              <Concept term="Can a release be reversed after funds are paid out?">
-                Not on this contract. Disputing a <Code>released</Code> engagement records the disagreement
-                on-chain and moves it to <Code>disputed</Code>, but there&apos;s no clawback path here - funds
-                already paid out can only be revisited through GenLayer&apos;s protocol-level appeal on the
-                original release transaction, not by this contract moving value a second time.
+              <Concept term="Can a dispute actually reverse a payout?">
+                Yes, because nothing is ever paid out before the dispute window has had its chance. An{' '}
+                <Code>approved</Code> verdict doesn&apos;t move funds - it opens a 3-day appeal window, exactly
+                like a rejection does. A dispute raised during that window moves the engagement to{' '}
+                <Code>disputed</Code> with the deposit still fully locked, and the next verdict - approval or
+                rejection - still has to clear its own settlement step before anything moves. Funds change hands
+                in exactly four places in the whole contract: <Code>settle_approved</Code>,{' '}
+                <Code>settle_rejected</Code>, <Code>decline_engagement</Code>, and <Code>refund_expired</Code> -
+                never inside <Code>request_release</Code> or <Code>raise_dispute</Code> themselves. The tradeoff:
+                a clean approval takes as long to finalize as a clean rejection always did, instead of being
+                instant.
               </Concept>
               <Concept term="Are comments visible to anyone else?">
                 No. Each comment is end-to-end encrypted for the depositor and counterparty only - not even this

@@ -89,3 +89,37 @@ def test_submit_deliverable_caps_url_count(direct_vm, direct_deploy, direct_alic
     too_many = [f"https://example.com/{i}" for i in range(11)]
     with direct_vm.expect_revert("Too many evidence URLs"):
         contract.submit_deliverable(eid, too_many, "notes")
+
+
+def test_submit_deliverable_enforces_bound_evidence_prefix(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_surety(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    direct_vm.value = 1000
+    eid = contract.create_engagement(
+        direct_bob, "Ship it", future_deadline(), allowed_evidence_prefix="https://github.com/example/repo"
+    )
+    direct_vm.value = 0
+    _accept(contract, direct_vm, direct_bob, eid)
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("does not match the prefix committed to at creation"):
+        contract.submit_deliverable(eid, ["https://evil.example.com/fake"], "not the real repo")
+
+    # A URL that does match the bound prefix still goes through normally.
+    contract.submit_deliverable(eid, ["https://github.com/example/repo/pull/1"], "see the PR")
+    eng = contract.get_engagement(eid)
+    assert eng["status"] == "submitted"
+    assert eng["allowed_evidence_prefix"] == "https://github.com/example/repo"
+
+
+def test_submit_deliverable_unrestricted_when_no_prefix_bound(direct_vm, direct_deploy, direct_alice, direct_bob):
+    # Default behavior (empty prefix) is unchanged - any URL is accepted.
+    contract = deploy_surety(direct_vm, direct_deploy)
+    eid = _create(contract, direct_vm, direct_alice, direct_bob)
+    _accept(contract, direct_vm, direct_bob, eid)
+
+    direct_vm.sender = direct_bob
+    contract.submit_deliverable(eid, ["https://anywhere.example.com"], "notes")
+    eng = contract.get_engagement(eid)
+    assert eng["status"] == "submitted"
+    assert eng["allowed_evidence_prefix"] == ""

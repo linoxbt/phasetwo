@@ -41,7 +41,13 @@ def test_request_release_approves_matching_evidence():
     )
     assert tx_execution_succeeded(tx), f"request_release failed: {tx}"
 
+    # A "met" verdict opens the same appeal window a rejection does - it
+    # doesn't pay out on the spot. See test_settle_approved_integration.py
+    # for the full approve -> window elapses -> settle_approved -> released
+    # path, and its redirect-during-dispute test for the economic guarantee
+    # this exists to provide.
     eng = contract.get_engagement(args=[eid]).call()
-    assert eng["status"] == "released", f"expected released, got {eng['status']}: {eng['decision_reasoning']}"
+    assert eng["status"] == "approved", f"expected approved, got {eng['status']}: {eng['decision_reasoning']}"
     assert eng["decision_reasoning"].strip() != ""
-    assert eng["funds_released"] is True
+    assert eng["funds_released"] is False
+    assert eng["approved_at"] != 0

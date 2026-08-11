@@ -32,6 +32,7 @@ class Status:
     ACCEPTED = "accepted"
     DECLINED = "declined"
     SUBMITTED = "submitted"
+    APPROVED = "approved"
     RELEASED = "released"
     REJECTED = "rejected"
     DISPUTED = "disputed"
@@ -71,6 +72,14 @@ class Engagement:
     # milestone exactly like any other engagement; this field exists purely
     # for the frontend to group and display siblings.
     parent_id: u256
+    # "" = unrestricted. Non-empty binds every evidence URL (initial submission
+    # and any later dispute's additional_evidence) to this prefix, committed to
+    # at creation time - a repo URL, an ipfs:// prefix, a specific domain. The
+    # depositor picks it; the contract just enforces whatever they committed to.
+    allowed_evidence_prefix: str
+    # 0 until request_release lands a "met" verdict. Starts the same appeal
+    # window rejected_at does - see Status.APPROVED / settle_approved.
+    approved_at: u256
 
 
 class Surety(gl.Contract):
@@ -118,13 +127,28 @@ class Surety(gl.Contract):
         if eng.status not in allowed:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Cannot {verb} in status '{eng.status}'")
 
+    def _require_evidence_bound(self, eng: Engagement, urls: DynArray[str]) -> None:
+        if not eng.allowed_evidence_prefix:
+            return
+        for url in urls:
+            if not url.startswith(eng.allowed_evidence_prefix):
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} Evidence URL '{url}' does not match the prefix "
+                    f"committed to at creation ('{eng.allowed_evidence_prefix}')"
+                )
+
     # ------------------------------------------------------------------
     # Flow A - create engagement
     # ------------------------------------------------------------------
 
     @gl.public.write.payable
     def create_engagement(
-        self, counterparty: Address, deliverable_spec: str, deadline: int, parent_id: int = 0
+        self,
+        counterparty: Address,
+        deliverable_spec: str,
+        deadline: int,
+        parent_id: int = 0,
+        allowed_evidence_prefix: str = "",
     ) -> int:
         counterparty = Address(counterparty)
         deadline = u256(deadline)
@@ -174,6 +198,8 @@ class Surety(gl.Contract):
             comments=[],
             rejected_at=u256(0),
             parent_id=parent,
+            allowed_evidence_prefix=allowed_evidence_prefix.strip(),
+            approved_at=u256(0),
         )
         self.engagements[engagement_id] = eng
         self.all_ids.append(engagement_id)
@@ -238,6 +264,7 @@ class Surety(gl.Contract):
             )
         if len(evidence_urls) > MAX_EVIDENCE_URLS:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Too many evidence URLs (max {MAX_EVIDENCE_URLS})")
+        self._require_evidence_bound(eng, evidence_urls)
 
         eng.evidence_urls.clear()
         for url in evidence_urls:
@@ -308,26 +335,19 @@ Respond with strict JSON only, no other text:
 
         eng.decision_reasoning = verdict["reasoning"]
 
+        # Neither branch pays out here - a "met" verdict opens the same kind
+        # of appeal window a rejection does (see Status.APPROVED /
+        # settle_approved) instead of moving funds immediately. That's what
+        # keeps a dispute raised during the window economically real: nothing
+        # has been paid yet, so the next verdict can still send the deposit
+        # either way. Funds only ever move once, in settle_approved,
+        # settle_rejected, decline_engagement, or refund_expired - never here.
         if verdict["met"]:
-            if not eng.funds_released:
-                self._pay(eng.counterparty, eng.amount)
-                eng.funds_released = True
-            eng.status = Status.RELEASED
+            eng.status = Status.APPROVED
+            eng.approved_at = self._now()
         else:
-            if eng.funds_released:
-                # Funds were already paid out on a prior release; a later
-                # dispute round now disagrees. There is no on-chain clawback
-                # path (see spec Section 7/13 - only request_release's own
-                # verdict or refund_expired may ever move escrowed value,
-                # and never twice). Record the disagreement transparently
-                # without relabeling this as a refundable rejection - a real
-                # reversal has to go through GenLayer's protocol-level
-                # appeal on the original release transaction, not this
-                # contract's state.
-                eng.status = Status.DISPUTED
-            else:
-                eng.status = Status.REJECTED
-                eng.rejected_at = self._now()
+            eng.status = Status.REJECTED
+            eng.rejected_at = self._now()
 
         self._save(eng)
 
@@ -341,13 +361,22 @@ Respond with strict JSON only, no other text:
         sender = gl.message.sender_address
         if sender != eng.depositor and sender != eng.counterparty:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Only the depositor or counterparty may dispute")
-        self._require_status(eng, (Status.REJECTED, Status.RELEASED), "dispute")
+        # APPROVED, not RELEASED: a "met" verdict no longer pays out on the
+        # spot (see request_release) - RELEASED is only reached via
+        # settle_approved, once undisputed past the appeal window, and is
+        # genuinely final at that point.
+        self._require_status(eng, (Status.REJECTED, Status.APPROVED), "dispute")
         if not reason.strip():
             raise gl.vm.UserError(f"{ERROR_EXPECTED} A dispute reason is required")
         if eng.status == Status.REJECTED and self._now() > eng.rejected_at + self.appeal_window_seconds:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} The appeal window has closed - call settle_rejected to finalize the refund"
             )
+        if eng.status == Status.APPROVED and self._now() > eng.approved_at + self.appeal_window_seconds:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} The appeal window has closed - call settle_approved to finalize the release"
+            )
+        self._require_evidence_bound(eng, additional_evidence)
 
         for url in additional_evidence:
             if len(eng.evidence_urls) >= MAX_EVIDENCE_URLS:
@@ -423,6 +452,25 @@ Respond with strict JSON only, no other text:
         self._save(eng)
 
     # ------------------------------------------------------------------
+    # Flow G2 - settle a final approval (deterministic, no LLM)
+    # ------------------------------------------------------------------
+
+    @gl.public.write
+    def settle_approved(self, engagement_id: int) -> None:
+        eng = self._get(u256(engagement_id))
+        self._require_status(eng, (Status.APPROVED,), "settle")
+        if self._now() <= eng.approved_at + self.appeal_window_seconds:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Appeal window is still open - call raise_dispute instead"
+            )
+
+        if not eng.funds_released:
+            self._pay(eng.counterparty, eng.amount)
+            eng.funds_released = True
+        eng.status = Status.RELEASED
+        self._save(eng)
+
+    # ------------------------------------------------------------------
     # Flow H - comment-encryption public key registry (global, reusable
     # across every engagement an address is ever a party to)
     # ------------------------------------------------------------------
@@ -472,6 +520,8 @@ Respond with strict JSON only, no other text:
             ],
             "rejected_at": int(eng.rejected_at),
             "parent_id": int(eng.parent_id),
+            "allowed_evidence_prefix": eng.allowed_evidence_prefix,
+            "approved_at": int(eng.approved_at),
         }
 
     @gl.public.view
