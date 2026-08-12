@@ -23,7 +23,9 @@ export interface Engagement {
   id: number
   depositor: `0x${string}`
   counterparty: `0x${string}`
-  amount: number
+  // Wei-scale u256 on the contract side - genlayer-js returns these as
+  // bigint at runtime (not number), which can exceed Number.MAX_SAFE_INTEGER.
+  amount: bigint
   deliverable_spec: string
   evidence_urls: string[]
   notes: string
@@ -38,7 +40,7 @@ export interface Engagement {
   parent_id: number
   allowed_evidence_prefix: string
   approved_at: number
-  dispute_bond: number
+  dispute_bond: bigint
   disputer: `0x${string}`
   pre_dispute_status: string
 }

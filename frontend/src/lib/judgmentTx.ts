@@ -101,17 +101,25 @@ function cacheKey(engagementId: number): string {
   return `phasetwo:judgmenttx:${getCurrentNetwork()}:${getContractAddress()}:${engagementId}`
 }
 
-/** Reconstructs the most recent request_release transaction hash for an
- * engagement purely from chain state, so any browser (not just the one that
- * triggered the judgment) can find it after a reload. Only meaningful on
- * chains with a configured consensus contract - callers should skip this on
- * chains without one (e.g. Studio Network has no appealsContract either). */
-export async function getLastJudgmentTx(engagementId: number): Promise<`0x${string}` | null> {
-  if (typeof window !== 'undefined') {
-    const cached = window.localStorage.getItem(cacheKey(engagementId))
-    if (cached) return cached as `0x${string}`
-  }
-
+/** Scans NewTransaction events addressed to `contractAddress` on the
+ * currently active chain, newest first, decoding each transaction's calldata
+ * and calling `visit` on it until `visit` returns a non-null/undefined
+ * result (which is then returned) or the scan exhausts MAX_PAGES. Shared
+ * paging/decoding infrastructure for anything that needs to find a specific
+ * (or simply the most recent) real transaction to a contract purely from
+ * chain state - e.g. the most recent request_release for one engagement
+ * (getLastJudgmentTx), or the single most recent transaction at all
+ * (lib/validators.ts's live validator-count read). Only meaningful on chains
+ * with a configured consensus contract - resolves to null on chains without
+ * one (e.g. Studio Network has no appealsContract either). */
+export async function scanRecentTransactions<T>(
+  contractAddress: `0x${string}`,
+  visit: (
+    tx: any,
+    decoded: { method: string; args: CalldataValue[] } | null,
+    txId: `0x${string}`,
+  ) => T | null | undefined,
+): Promise<T | null> {
   const chain = getActiveChain() as any
   const consensus = chain.consensusMainContract
   if (!consensus?.address) return null
@@ -119,7 +127,6 @@ export async function getLastJudgmentTx(engagementId: number): Promise<`0x${stri
   if (!newTransactionEvent) return null
 
   const client = getReadClient()
-  const contractAddress = getContractAddress()
   const latest = await withRetry(() => client.getBlockNumber())
 
   let toBlock = latest
@@ -141,10 +148,8 @@ export async function getLastJudgmentTx(engagementId: number): Promise<`0x${stri
       if (!txId) continue
       const tx = await withRetry(() => client.getTransaction({ hash: txId as any }))
       const decoded = decodeCalldataMethod((tx as any).txCalldata)
-      if (decoded?.method === 'request_release' && String(decoded.args[0]) === String(engagementId)) {
-        if (typeof window !== 'undefined') window.localStorage.setItem(cacheKey(engagementId), txId)
-        return txId
-      }
+      const result = visit(tx, decoded, txId)
+      if (result !== null && result !== undefined) return result
     }
 
     if (fromBlock === 0n) break
@@ -152,4 +157,23 @@ export async function getLastJudgmentTx(engagementId: number): Promise<`0x${stri
   }
 
   return null
+}
+
+/** Reconstructs the most recent request_release transaction hash for an
+ * engagement purely from chain state, so any browser (not just the one that
+ * triggered the judgment) can find it after a reload. */
+export async function getLastJudgmentTx(engagementId: number): Promise<`0x${string}` | null> {
+  if (typeof window !== 'undefined') {
+    const cached = window.localStorage.getItem(cacheKey(engagementId))
+    if (cached) return cached as `0x${string}`
+  }
+
+  const contractAddress = getContractAddress()
+  const txId = await scanRecentTransactions(contractAddress, (_tx, decoded, id) => {
+    if (decoded?.method === 'request_release' && String(decoded.args[0]) === String(engagementId)) return id
+    return null
+  })
+
+  if (txId && typeof window !== 'undefined') window.localStorage.setItem(cacheKey(engagementId), txId)
+  return txId
 }

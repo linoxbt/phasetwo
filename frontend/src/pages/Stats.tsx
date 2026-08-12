@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { listAllIds, getEngagement } from '../lib/surety'
 import { mapWithConcurrency } from '../lib/concurrency'
 import { NETWORKS as NETWORK_REGISTRY, useNetwork } from '../lib/network'
-import { getRecentValidatorCount } from '../lib/validators'
+import { getValidatorCount } from '../lib/validators'
 import type { Engagement, StatusValue } from '../lib/types'
 import { STATUS_LABEL } from '../lib/types'
 import { StatusBadge } from '../components/StatusBadge'
@@ -107,7 +107,6 @@ export function Stats() {
   const network = useNetwork()
   const [engagements, setEngagements] = useState<Engagement[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [validatorCount, setValidatorCount] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -128,23 +127,12 @@ export function Stats() {
     // network is a dependency so switching networks re-fetches against the newly selected contract
   }, [network])
 
-  useEffect(() => {
-    let cancelled = false
-    setValidatorCount(null)
-    getRecentValidatorCount(network).then((n) => {
-      if (!cancelled) setValidatorCount(n)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [network])
-
   const total = engagements?.length ?? 0
   const counts = Object.fromEntries(STATUS_ORDER.map((s) => [s, 0])) as Record<StatusValue, number>
   for (const e of engagements ?? []) counts[e.status] = (counts[e.status] ?? 0) + 1
 
   const sumWhere = (statuses: StatusValue[]) =>
-    (engagements ?? []).filter((e) => statuses.includes(e.status)).reduce((sum, e) => sum + BigInt(e.amount), 0n)
+    (engagements ?? []).filter((e) => statuses.includes(e.status)).reduce((sum, e) => sum + e.amount, 0n)
   const totalReleased = sumWhere(['released'])
   const totalLocked = sumWhere(LOCKED_STATUSES)
   const totalRefunded = sumWhere(REFUNDED_STATUSES)
@@ -175,7 +163,7 @@ export function Stats() {
     valueLabel: String(counts[s]),
   }))
 
-  const validatorsShown = validatorCount ?? NETWORK_REGISTRY[network].chain.defaultNumberOfInitialValidators
+  const validatorsShown = getValidatorCount(network)
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-12">
@@ -189,8 +177,9 @@ export function Stats() {
 
       <h1 className="text-3xl font-bold tracking-tight text-ink sm:text-4xl">Transparency</h1>
       <p className="mt-3 max-w-xl text-ink-soft">
-        Every figure below is read live from the contract at request time - nothing aggregated, cached, or computed
-        off-chain.
+        Every figure below is read live from the contract at request time, except validator count - that&apos;s
+        GenLayer&apos;s own configured network parameter, not contract data. Nothing here is aggregated, cached, or
+        computed off-chain.
       </p>
 
       {error && <p className="mt-6 text-sm text-red-600">{error}</p>}

@@ -71,6 +71,15 @@ def test_create_engagement_ids_increment(direct_vm, direct_deploy, direct_alice,
     assert id2 == id1 + 1
 
 
+def test_create_engagement_rejects_oversized_spec(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_surety(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    direct_vm.value = 1000
+
+    with direct_vm.expect_revert("deliverable_spec too long"):
+        contract.create_engagement(direct_bob, "x" * 8001, future_deadline())
+
+
 def test_create_engagement_requires_evidence_prefix(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_surety(direct_vm, direct_deploy)
     direct_vm.sender = direct_alice

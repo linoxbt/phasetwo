@@ -70,7 +70,14 @@ export function AddressReputation({
     }
   }, [address, network])
 
-  if (error) return null
+  if (error) {
+    return (
+      <Card className="p-4">
+        <p className="font-mono text-xs text-ink-soft">{shortAddress(address)}</p>
+        <p className="mt-1 text-xs text-ink-soft/70">Couldn&apos;t load track record - try again shortly.</p>
+      </Card>
+    )
+  }
 
   if (!stats) {
     return <Skeleton className="h-20 rounded-2xl" />

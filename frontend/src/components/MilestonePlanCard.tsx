@@ -16,10 +16,15 @@ import { Card } from './ui/Card'
 export function MilestonePlanCard({ engagement }: { engagement: Engagement }) {
   const network = useNetwork()
   const [siblings, setSiblings] = useState<Engagement[] | null>(null)
+  // Separate from siblings===null, which also means the ordinary "not part
+  // of a plan" case - conflating the two would either hide a real fetch
+  // failure or spam an error banner on every standalone engagement.
+  const [error, setError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setSiblings(null)
+    setError(false)
     ;(async () => {
       try {
         const ids = await listEngagementsFor(engagement.depositor)
@@ -28,7 +33,7 @@ export function MilestonePlanCard({ engagement }: { engagement: Engagement }) {
         const plan = items.filter((e) => e.id === rootId || e.parent_id === rootId)
         if (!cancelled) setSiblings(plan.length > 1 ? plan.sort((a, b) => a.id - b.id) : null)
       } catch {
-        if (!cancelled) setSiblings(null)
+        if (!cancelled) setError(true)
       }
     })()
     return () => {
@@ -36,11 +41,24 @@ export function MilestonePlanCard({ engagement }: { engagement: Engagement }) {
     }
   }, [engagement.depositor, engagement.id, engagement.parent_id, network])
 
+  // This engagement explicitly claims to be part of a plan (a non-zero
+  // parent_id, or something else already pointed at it as one) - a failed
+  // lookup here is worth surfacing, unlike for a genuinely standalone
+  // engagement where silence is the correct, common-case rendering.
+  if (error && engagement.parent_id !== 0) {
+    return (
+      <Card className="mt-8 p-5">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-ink-soft">Milestone plan</h2>
+        <p className="text-sm text-ink-soft">Couldn&apos;t load the rest of this plan - try again shortly.</p>
+      </Card>
+    )
+  }
+
   if (!siblings) return null
 
   const releasedCount = siblings.filter((s) => s.status === 'released').length
-  const releasedTotal = siblings.filter((s) => s.status === 'released').reduce((sum, s) => sum + BigInt(s.amount), 0n)
-  const grandTotal = siblings.reduce((sum, s) => sum + BigInt(s.amount), 0n)
+  const releasedTotal = siblings.filter((s) => s.status === 'released').reduce((sum, s) => sum + s.amount, 0n)
+  const grandTotal = siblings.reduce((sum, s) => sum + s.amount, 0n)
 
   return (
     <Card className="mt-8 p-5">

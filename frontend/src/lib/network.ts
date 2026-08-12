@@ -45,8 +45,7 @@ export function getActiveChain() {
 export function getContractAddress(): `0x${string}` {
   const address = NETWORKS[current].contractAddress
   if (!address) {
-    // eslint-disable-next-line no-console
-    console.error(`Contract address not set for ${current} - see frontend/.env.local`)
+    throw new Error(`Contract address not set for ${current} - see frontend/.env.local`)
   }
   return address
 }

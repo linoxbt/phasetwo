@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FAUCET_URL } from '../lib/faucet'
+import { FAUCET_URL, FAUCET_AMOUNT, FAUCET_INTERVAL } from '../lib/faucet'
 import { NETWORKS as NETWORK_REGISTRY } from '../lib/network'
 
 const SECTIONS = [
@@ -347,7 +347,7 @@ export function Docs() {
               <a href={FAUCET_URL} target="_blank" rel="noreferrer" className="text-coral-600 underline hover:text-coral-700">
                 Claim testnet GEN from the faucet
               </a>{' '}
-              (100 GEN per claim, once every 7 days) - Studio Network is gasless and needs no funding at all.
+              ({FAUCET_AMOUNT} per claim, {FAUCET_INTERVAL}) - Studio Network is gasless and needs no funding at all.
             </p>
           </Section>
 
@@ -363,20 +363,22 @@ export function Docs() {
               </Concept>
               <Concept term="What happens to a rejection nobody disputes?">
                 It doesn&apos;t sit stuck forever. A rejection opens a 3-day appeal window - either party can
-                dispute with new evidence during it, but once it closes, anyone can permissionlessly call{' '}
-                <Code>settle_rejected</Code> to refund the deposit back to the depositor.
+                dispute it (backed by a bond) during that window to force a re-judgment, but once it closes,
+                anyone can permissionlessly call <Code>settle_rejected</Code> to refund the deposit back to the
+                depositor.
               </Concept>
               <Concept term="Can a dispute actually reverse a payout?">
                 Yes, because nothing is ever paid out before the dispute window has had its chance. An{' '}
                 <Code>approved</Code> verdict doesn&apos;t move funds - it opens a 3-day appeal window, exactly
                 like a rejection does. A dispute raised during that window moves the engagement to{' '}
                 <Code>disputed</Code> with the deposit still fully locked, and the next verdict - approval or
-                rejection - still has to clear its own settlement step before anything moves. Funds change hands
-                in exactly four places in the whole contract: <Code>settle_approved</Code>,{' '}
+                rejection - still has to clear its own settlement step before anything moves. The deposit itself
+                changes hands in exactly four places in the whole contract: <Code>settle_approved</Code>,{' '}
                 <Code>settle_rejected</Code>, <Code>decline_engagement</Code>, and <Code>refund_expired</Code> -
-                never inside <Code>request_release</Code> or <Code>raise_dispute</Code> themselves. The tradeoff:
-                a clean approval takes as long to finalize as a clean rejection always did, instead of being
-                instant.
+                never inside <Code>request_release</Code> or <Code>raise_dispute</Code>. (<Code>request_release</Code>{' '}
+                does move money in one other case - resolving the previous round&apos;s dispute bond - but the
+                deposit stays untouched until settlement.) The tradeoff: a clean approval takes as long to
+                finalize as a clean rejection always did, instead of being instant.
               </Concept>
               <Concept term="What stops someone from disputing forever?">
                 Two things, together. It&apos;s <em>bounded</em>: <Code>dispute_round</Code> is capped at{' '}

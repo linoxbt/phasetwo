@@ -124,16 +124,24 @@ export function CreateEngagement() {
       return
     }
     let rootId = milestoneRootId
-    try {
-      const ids = await listEngagementsFor(address)
-      const newestId = Math.max(...ids)
-      if (milestoneStep === 0) {
-        rootId = newestId
-        setMilestoneRootId(newestId)
+    // Only step 0 needs to discover the plan's root id - later steps already
+    // carry it via milestoneRootId. If this lookup fails right when it's
+    // needed, abort with a real error instead of silently falling through to
+    // parent_id ?? 0, which would create the rest of the plan as standalone
+    // engagements with no link back to the first one.
+    if (milestoneStep === 0) {
+      try {
+        const ids = await listEngagementsFor(address)
+        rootId = Math.max(...ids)
+        setMilestoneRootId(rootId)
+      } catch {
+        setSubmitting(false)
+        setMilestoneStep(null)
+        setFormError(
+          'The first milestone was created, but Phase Two couldn’t confirm its id to link the rest of the plan to it. Check My Engagements to find it, then create the remaining milestones individually.',
+        )
+        return
       }
-    } catch {
-      // Falls through - if this lookup fails the next step's parent link
-      // fails loudly too, which is safer than silently guessing an id.
     }
     setMilestoneDone((prev) => {
       const next = [...prev]
@@ -267,7 +275,8 @@ export function CreateEngagement() {
     ? milestoneRows.every((r) => r.label.trim() && Number(r.amount) > 0)
     : !!amount && Number(amount) > 0
   const totalAmount = splitMilestones ? String(milestoneTotal) : amount
-  const readyToReview = validCounterparty && title.trim() && verificationCriteria.trim() && deliveryMethodLabel && paymentReady
+  const readyToReview =
+    validCounterparty && title.trim() && verificationCriteria.trim() && deliveryMethodLabel && paymentReady && !!deadlineUnix
 
   return (
     <div className="mx-auto max-w-xl px-6 py-12">
@@ -452,6 +461,7 @@ export function CreateEngagement() {
                     value={row.label}
                     onChange={(e) => updateMilestoneRow(i, { label: e.target.value })}
                     placeholder={`Milestone ${i + 1}`}
+                    aria-label={`Milestone ${i + 1} label`}
                     className="flex-[2]"
                   />
                   <Input
@@ -461,6 +471,7 @@ export function CreateEngagement() {
                     value={row.amount}
                     onChange={(e) => updateMilestoneRow(i, { amount: e.target.value })}
                     placeholder="0.5 GEN"
+                    aria-label={`Milestone ${i + 1} deposit amount in GEN`}
                     className="flex-1"
                   />
                   <button

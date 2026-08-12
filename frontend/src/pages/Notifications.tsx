@@ -18,6 +18,7 @@ export function Notifications() {
 
   useEffect(() => {
     if (!address) return
+    let cancelled = false
     setLog(getNotificationLog(address))
     // Opening the inbox is what clears the badge, same as visiting My
     // Engagements - fetch current statuses so "read" reflects reality even
@@ -30,11 +31,16 @@ export function Notifications() {
       } catch {
         // best-effort - the log still renders from what's already stored
       } finally {
-        const entries = getNotificationLog(address)
-        setLog(entries)
-        setReadState(Object.fromEntries(entries.map((e, i) => [i, isNotificationRead(address, e)])))
+        if (!cancelled) {
+          const entries = getNotificationLog(address)
+          setLog(entries)
+          setReadState(Object.fromEntries(entries.map((e, i) => [i, isNotificationRead(address, e)])))
+        }
       }
     })()
+    return () => {
+      cancelled = true
+    }
   }, [address, network])
 
   function handleClear() {

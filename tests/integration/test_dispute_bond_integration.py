@@ -72,6 +72,41 @@ def test_raise_dispute_succeeds_with_minimum_bond():
     assert eng["pre_dispute_status"] == "rejected"
 
 
+def test_raise_dispute_caps_bond_at_the_required_minimum():
+    accounts = get_accounts()
+    depositor, counterparty = accounts[0], accounts[1]
+    contract = deploy_surety(account=depositor)
+    counterparty_contract = as_account(contract, counterparty)
+
+    eid = _reject_engagement(contract, counterparty_contract, counterparty.address)
+
+    # Send 3x the required bond - only the required amount should ever be at
+    # stake; the excess is refunded immediately rather than being exposed to
+    # forfeiture too.
+    tx = counterparty_contract.raise_dispute(args=[eid, "please re-review"]).transact(value=REQUIRED_BOND * 3)
+    assert tx_execution_succeeded(tx), f"raise_dispute with an overpaid bond should still succeed: {tx}"
+
+    eng = contract.get_engagement(args=[eid]).call()
+    assert eng["status"] == "disputed"
+    assert eng["dispute_bond"] == REQUIRED_BOND, f"expected the bond capped at {REQUIRED_BOND}, got {eng['dispute_bond']}"
+
+
+def test_raise_dispute_rejects_oversized_reason():
+    accounts = get_accounts()
+    depositor, counterparty = accounts[0], accounts[1]
+    contract = deploy_surety(account=depositor)
+    counterparty_contract = as_account(contract, counterparty)
+
+    eid = _reject_engagement(contract, counterparty_contract, counterparty.address)
+
+    tx = counterparty_contract.raise_dispute(args=[eid, "x" * 2001]).transact(value=REQUIRED_BOND)
+    assert tx_execution_failed(tx), f"expected an oversized dispute reason to be rejected: {tx}"
+
+    eng = contract.get_engagement(args=[eid]).call()
+    assert eng["status"] == "rejected"  # unchanged
+    assert eng["dispute_bond"] == 0
+
+
 def test_dispute_forfeits_bond_when_verdict_does_not_change():
     accounts = get_accounts()
     depositor, counterparty = accounts[0], accounts[1]

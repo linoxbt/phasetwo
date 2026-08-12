@@ -86,9 +86,17 @@ export function EngagementDetail() {
       setCanAppeal(false)
       return
     }
+    let cancelled = false
     withRetry(() => getReadClient().canAppeal({ txId: lastReleaseTx as TransactionHash }))
-      .then(setCanAppeal)
-      .catch(() => setCanAppeal(false))
+      .then((v) => {
+        if (!cancelled) setCanAppeal(v)
+      })
+      .catch(() => {
+        if (!cancelled) setCanAppeal(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [lastReleaseTx, chainSupportsAppeals])
 
   // Reconstructs the judgment tx purely from chain state, so the appeal box
@@ -107,9 +115,17 @@ export function EngagementDetail() {
   }, [eng?.id, eng?.status, network, chainSupportsAppeals])
 
   useEffect(() => {
+    let cancelled = false
     getAppealWindowSeconds()
-      .then(setAppealWindowSeconds)
-      .catch(() => setAppealWindowSeconds(null))
+      .then((v) => {
+        if (!cancelled) setAppealWindowSeconds(v)
+      })
+      .catch(() => {
+        if (!cancelled) setAppealWindowSeconds(null)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [network])
 
   if (loadError) {
@@ -205,8 +221,22 @@ export function EngagementDetail() {
         >
           {formatUnixDate(eng.deadline)}
         </dd>
+        <dt className="text-ink-soft">Evidence must match</dt>
+        <dd className="break-all font-mono text-xs text-ink">{eng.allowed_evidence_prefix}</dd>
         <dt className="text-ink-soft">Dispute round</dt>
         <dd className="text-ink">{eng.dispute_round}</dd>
+        {eng.status === 'disputed' && eng.dispute_bond > 0n && (
+          <>
+            <dt className="text-ink-soft">Disputed by</dt>
+            <dd className="font-mono text-ink">
+              {shortAddress(eng.disputer)} ({eng.disputer.toLowerCase() === eng.depositor.toLowerCase() ? 'depositor' : 'counterparty'})
+            </dd>
+            <dt className="text-ink-soft">Bond locked</dt>
+            <dd className="text-ink">
+              {formatGen(eng.dispute_bond)} - refunded if this re-judgment reverses the {eng.pre_dispute_status} verdict, forfeited if it doesn&apos;t
+            </dd>
+          </>
+        )}
         <dt className="text-ink-soft">Contract</dt>
         <dd className="font-mono text-ink">
           <a
@@ -302,7 +332,7 @@ export function EngagementDetail() {
               prefill: {
                 counterparty: eng.counterparty,
                 ...parseSpec(eng.deliverable_spec),
-                amount: formatEther(BigInt(eng.amount)),
+                amount: formatEther(eng.amount),
               },
             }}
             className="text-coral-600 underline hover:text-coral-700"
@@ -526,7 +556,7 @@ function CommentThread({
   const [hash, setHash] = useState<`0x${string}` | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const { keypair, unlocking, unlock } = useSecureMessaging(address, provider)
+  const { keypair, unlocking, error: unlockError, unlock } = useSecureMessaging(address, provider)
   const [depositorPubkey, setDepositorPubkey] = useState<string | null>(null)
   const [counterpartyPubkey, setCounterpartyPubkey] = useState<string | null>(null)
   const [pubkeysLoaded, setPubkeysLoaded] = useState(false)
@@ -582,6 +612,7 @@ function CommentThread({
           <Button size="sm" variant="secondary" loading={unlocking} onClick={unlock}>
             Enable secure messaging
           </Button>
+          {unlockError && <p className="mt-2 text-sm text-red-600">{unlockError}</p>}
         </Card>
       )}
 
@@ -971,6 +1002,10 @@ function AcceptDeclineActions({
   )
 }
 
+// Mirrors contracts/surety.py's MAX_EVIDENCE_URLS - catches an oversized
+// submission client-side instead of only after a real transaction/gas spend.
+const MAX_EVIDENCE_URLS = 10
+
 function SubmitDeliverableForm({
   address,
   provider,
@@ -1021,6 +1056,10 @@ function SubmitDeliverableForm({
             .filter(Boolean)
           if (evidenceUrls.length === 0) {
             setError('Add at least one evidence URL.')
+            return
+          }
+          if (evidenceUrls.length > MAX_EVIDENCE_URLS) {
+            setError(`Too many evidence URLs (max ${MAX_EVIDENCE_URLS}).`)
             return
           }
           setBusy(true)
@@ -1116,8 +1155,16 @@ function DisputeForm({
   const [maxRounds, setMaxRounds] = useState<number | null>(null)
 
   useEffect(() => {
-    getRequiredDisputeBond(engagementId).then(setRequiredBond).catch(() => {})
-    getMaxDisputeRounds().then(setMaxRounds).catch(() => {})
+    let cancelled = false
+    getRequiredDisputeBond(engagementId).then((v) => {
+      if (!cancelled) setRequiredBond(v)
+    }).catch(() => {})
+    getMaxDisputeRounds().then((v) => {
+      if (!cancelled) setMaxRounds(v)
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [engagementId])
 
   if (maxRounds !== null && disputeRound >= maxRounds) {

@@ -16,9 +16,9 @@ def test_raise_dispute_requires_terminal_status(direct_vm, direct_deploy, direct
 
     # Still status=created here — raise_dispute is only valid from
     # rejected/approved, which are only reachable via request_release's LLM
-    # judgment (integration tests). Same applies to the round-cap and
-    # bond-amount checks inside raise_dispute - unreachable in direct mode for
-    # the same reason, covered by tests/integration/test_dispute_bond_integration.py.
+    # judgment (integration tests). Same applies to the round-cap, bond-amount,
+    # and reason-length checks inside raise_dispute - unreachable in direct mode
+    # for the same reason, covered by tests/integration/test_dispute_bond_integration.py.
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("Cannot dispute in status 'created'"):
         contract.raise_dispute(eid, "not happy")

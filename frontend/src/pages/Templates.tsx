@@ -6,7 +6,7 @@ import { Card } from '../components/ui/Card'
 export function Templates() {
   const navigate = useNavigate()
 
-  function useTemplate(templateId: string) {
+  function applyTemplate(templateId: string) {
     const template = ENGAGEMENT_TEMPLATES.find((t) => t.id === templateId)
     if (!template) return
     const prefill: Prefill = {
@@ -34,7 +34,7 @@ export function Templates() {
             <p className="mt-1 font-display text-base font-semibold text-ink">{t.title}</p>
             <p className="mt-2 flex-1 text-sm text-ink-soft">{t.description}</p>
             <p className="mt-3 text-xs text-ink-soft/70">Delivery: {t.deliveryMethod}</p>
-            <Button size="sm" className="mt-4 self-start" onClick={() => useTemplate(t.id)}>
+            <Button size="sm" className="mt-4 self-start" onClick={() => applyTemplate(t.id)}>
               Use this template
             </Button>
           </Card>

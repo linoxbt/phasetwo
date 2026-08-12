@@ -9,8 +9,7 @@ import { NETWORKS } from './network'
 const projectId = import.meta.env.VITE_REOWN_PROJECT_ID as string
 
 if (!projectId) {
-  // eslint-disable-next-line no-console
-  console.error('VITE_REOWN_PROJECT_ID is not set - get one at https://dashboard.reown.com')
+  throw new Error('VITE_REOWN_PROJECT_ID is not set - get one at https://dashboard.reown.com and add it to .env.local')
 }
 
 // Neither GenLayer network is a built-in AppKit network, so both are defined

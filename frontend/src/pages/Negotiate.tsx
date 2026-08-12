@@ -22,7 +22,7 @@ interface Suggestion {
 export function Negotiate() {
   const { address, provider, connect } = useWallet()
   const network = useNetwork()
-  const { keypair, unlocking, unlock } = useSecureMessaging(address, provider)
+  const { keypair, unlocking, error: unlockError, unlock } = useSecureMessaging(address, provider)
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -91,6 +91,7 @@ export function Negotiate() {
           <Button size="sm" variant="secondary" loading={unlocking} onClick={unlock}>
             Enable secure messaging
           </Button>
+          {unlockError && <p className="mt-2 text-sm text-red-600">{unlockError}</p>}
         </Card>
       ) : (
         <div className="mt-6">

@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Reveal } from '../components/ui/Reveal'
 import { AnimatedCounter } from '../components/ui/AnimatedCounter'
 import { Logo } from '../components/Logo'
 import { NetworkBanner } from '../components/NetworkBanner'
-import { NETWORKS, useNetwork } from '../lib/network'
-import { getRecentValidatorCount } from '../lib/validators'
+import { useNetwork } from '../lib/network'
+import { getValidatorCount } from '../lib/validators'
 import {
   IconLock,
   IconUpload,
@@ -105,22 +104,7 @@ function MarketingHeader() {
 
 function Hero() {
   const network = useNetwork()
-  // null while loading. AnimatedCounter only animates once per mount, so the
-  // Stat below is keyed on this value - when the real count lands after the
-  // default's already animated in, that key change forces a fresh mount
-  // instead of silently freezing at the placeholder number.
-  const [validatorCount, setValidatorCount] = useState<number | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    setValidatorCount(null)
-    getRecentValidatorCount(network).then((n) => {
-      if (!cancelled) setValidatorCount(n)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [network])
+  const validatorCount = getValidatorCount(network)
 
   return (
     <section className="px-4 pt-6 sm:px-6 sm:pt-8">
@@ -163,12 +147,7 @@ function Hero() {
             width instead of the row wrapping when labels don't fit. */}
         <div className="mx-auto mt-3 grid max-w-6xl grid-cols-3 divide-x divide-ink/8 rounded-2xl border border-ink/8 bg-paper py-6">
           <div className="px-3 sm:px-10">
-            <Stat
-              key={validatorCount ?? 'loading'}
-              value={validatorCount ?? NETWORKS[network].chain.defaultNumberOfInitialValidators}
-              suffix=""
-              label="Validators per verdict"
-            />
+            <Stat key={validatorCount} value={validatorCount} suffix="" label="Validators per verdict" />
           </div>
           <div className="px-3 sm:px-10">
             <Stat value={0} prefix="$" label="Trusted middleman" />

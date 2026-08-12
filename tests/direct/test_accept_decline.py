@@ -68,6 +68,15 @@ def test_decline_engagement_requires_reason(direct_vm, direct_deploy, direct_ali
         contract.decline_engagement(eid, "   ")
 
 
+def test_decline_engagement_rejects_oversized_reason(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_surety(direct_vm, direct_deploy)
+    eid = _create(contract, direct_vm, direct_alice, direct_bob)
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("Reason too long"):
+        contract.decline_engagement(eid, "x" * 2001)
+
+
 def test_decline_engagement_blocks_once_accepted(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy_surety(direct_vm, direct_deploy)
     eid = _create(contract, direct_vm, direct_alice, direct_bob)
