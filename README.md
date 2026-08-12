@@ -35,12 +35,12 @@ A single Intelligent Contract (class `Surety`) owns the full escrow lifecycle:
 
 | Method | Type | Description |
 |---|---|---|
-| `create_engagement(counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix)` | write · payable | Locks the sent value as the deposit, opens a new engagement. A non-zero `parent_id` links it as one installment of the milestone plan rooted at that engagement id (same depositor/counterparty, and that engagement must itself be a root) - every other method treats a milestone exactly like any other engagement. `allowed_evidence_prefix` is **required** - a repo URL, an `ipfs://` reference, a specific domain - and binds every evidence URL `submit_deliverable` will ever accept, committed to before any work begins |
+| `create_engagement(counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix)` | write · payable | Locks the sent value as the deposit, opens a new engagement. `deliverable_spec` is capped at 8,000 characters. A non-zero `parent_id` links it as one installment of the milestone plan rooted at that engagement id (same depositor/counterparty, and that engagement must itself be a root) - every other method treats a milestone exactly like any other engagement. `allowed_evidence_prefix` is **required** - a repo URL, an `ipfs://` reference, a specific domain - and binds every evidence URL `submit_deliverable` will ever accept, committed to before any work begins |
 | `accept_engagement(engagement_id)` | write · counterparty only | Accepts the engagement, unlocking `submit_deliverable`. Moves no funds |
-| `decline_engagement(engagement_id, reason)` | write · counterparty only | Declines with a required reason and refunds the deposit to the depositor immediately |
+| `decline_engagement(engagement_id, reason)` | write · counterparty only | Declines with a required reason (capped at 2,000 characters) and refunds the deposit to the depositor immediately |
 | `submit_deliverable(engagement_id, evidence_urls, notes)` | write · counterparty only, one-time | Attaches evidence, moves the engagement to `submitted`. Requires `accepted` status first; blocked once the deadline has passed, after the first submission, or if a URL doesn't match the bound `allowed_evidence_prefix`. This is the only place evidence is ever set - it's locked from here on, including through every future dispute |
 | `request_release(engagement_id)` | write | Triggers validator judgment — fetches the locked evidence live, moves to `approved` or `rejected` based on consensus. Neither outcome pays out yet - see `settle_approved`/`settle_rejected`. If this resolves a prior dispute, it also settles that dispute's bond - see `raise_dispute` |
-| `raise_dispute(engagement_id, reason)` | write · either party, payable | Contests the current `approved`/`rejected` verdict and forces a re-judgment of the same (locked) evidence - increments `dispute_round`, blocked once `dispute_round` reaches `get_max_dispute_rounds()` or that status's appeal window has closed. Requires a bond of at least `get_required_dispute_bond(engagement_id)` (5% of the deposit); the next `request_release` refunds it if the verdict changes, forfeits it to the other party if it doesn't |
+| `raise_dispute(engagement_id, reason)` | write · either party, payable | Contests the current `approved`/`rejected` verdict and forces a re-judgment of the same (locked) evidence - increments `dispute_round`, blocked once `dispute_round` reaches `get_max_dispute_rounds()` or that status's appeal window has closed. Requires a bond of at least `get_required_dispute_bond(engagement_id)` (5% of the deposit, capped there even if more is sent - any excess is refunded immediately, never put at risk); the next `request_release` refunds the bond if the verdict changes, forfeits it to the other party if it doesn't |
 | `refund_expired(engagement_id)` | write | Refunds the deposit if the deadline passed with nothing ever submitted, whether the engagement was still `created` or already `accepted` |
 | `settle_approved(engagement_id)` | write · permissionless | Finalizes an approved engagement once its 3-day appeal window closes with no dispute raised — pays the deposit to the counterparty. This is the *only* way funds ever reach the counterparty |
 | `settle_rejected(engagement_id)` | write · permissionless | Finalizes a rejected engagement once its 3-day appeal window closes with no dispute raised — refunds the deposit to the depositor |
@@ -106,8 +106,8 @@ App pages share a collapsible sidebar shell; a network switcher in the sidebar l
 
 | Network | Chain id | Contract address | Notes |
 |---|---|---|---|
-| **Asimov Testnet** | `4221` | `0xb4A4Ad2770419Eb9B87537460c506429A5256340` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
-| **Studio Network** | `61999` | `0xcB9FbeD708384E40D7ED855785D88Cb51f9860AC` | Hosted GenLayer Studio. Gasless — no funded account needed |
+| **Asimov Testnet** | `4221` | `0xf8D5EfC77038BC1E4Cdb0Da2129327Aecb26C79d` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
+| **Studio Network** | `61999` | `0x3B7ab6Bdd927230E9E5572dFa03E4de20D1dcb30` | Hosted GenLayer Studio. Gasless — no funded account needed |
 
 ## Getting started
 
@@ -129,8 +129,8 @@ npm run dev
 `.env.local`:
 
 ```bash
-VITE_CONTRACT_ADDRESS_ASIMOV=0xb4A4Ad2770419Eb9B87537460c506429A5256340
-VITE_CONTRACT_ADDRESS_STUDIONET=0xcB9FbeD708384E40D7ED855785D88Cb51f9860AC
+VITE_CONTRACT_ADDRESS_ASIMOV=0xf8D5EfC77038BC1E4Cdb0Da2129327Aecb26C79d
+VITE_CONTRACT_ADDRESS_STUDIONET=0x3B7ab6Bdd927230E9E5572dFa03E4de20D1dcb30
 VITE_REOWN_PROJECT_ID=<your project id from https://dashboard.reown.com>
 ```
 
@@ -142,7 +142,7 @@ source .venv/bin/activate
 pip install genlayer-test genvm-linter
 
 genvm-lint check contracts/surety.py    # lint + SDK validation
-pytest tests/direct/ -v                 # 56 fast, in-memory tests
+pytest tests/direct/ -v                 # 58 fast, in-memory tests
 ```
 
 Integration tests (`tests/integration/`) run against a live network and exercise the full validator-judgment path with real evidence URLs — see `genlayer-dev:integration-tests` if you have the GenLayer Claude Code skill installed, or run with `gltest tests/integration/ -v -s --network <network>` directly.

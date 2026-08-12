@@ -238,17 +238,17 @@ export function Docs() {
                 args="counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix"
                 note="Write · payable"
               >
-                Locks the sent value as the deposit and opens a new engagement. <Code>allowed_evidence_prefix</Code>{' '}
-                is required and binds every evidence URL <Code>submit_deliverable</Code> will ever accept,
-                committed to before any work begins: a repo URL, an <Code>ipfs://</Code> reference, a specific
-                domain.
+                Locks the sent value as the deposit and opens a new engagement. <Code>deliverable_spec</Code> is
+                capped at 8,000 characters. <Code>allowed_evidence_prefix</Code> is required and binds every
+                evidence URL <Code>submit_deliverable</Code> will ever accept, committed to before any work
+                begins: a repo URL, an <Code>ipfs://</Code> reference, a specific domain.
               </Method>
               <Method name="accept_engagement" args="engagement_id" note="Write · counterparty only">
                 Accepts the engagement, unlocking <Code>submit_deliverable</Code>. Moves no funds.
               </Method>
               <Method name="decline_engagement" args="engagement_id, reason" note="Write · counterparty only">
-                Declines the engagement with a required reason and refunds the deposit to the depositor
-                immediately.
+                Declines the engagement with a required reason (capped at 2,000 characters) and refunds the
+                deposit to the depositor immediately.
               </Method>
               <Method name="submit_deliverable" args="engagement_id, evidence_urls, notes" note="Write · counterparty only, one-time">
                 Attaches evidence and moves the engagement to <Code>submitted</Code>. Requires the engagement to be{' '}
@@ -266,9 +266,9 @@ export function Docs() {
                 Contests the current verdict and forces a re-judgment of the same evidence - increments the
                 dispute round, blocked once it reaches <Code>get_max_dispute_rounds()</Code> (3) or that
                 status&apos;s appeal window has closed. Requires a bond of at least{' '}
-                <Code>get_required_dispute_bond(engagement_id)</Code> (5% of the deposit); the next{' '}
-                <Code>request_release</Code> refunds it if the verdict changes, forfeits it to the other party if
-                it doesn&apos;t.
+                <Code>get_required_dispute_bond(engagement_id)</Code> (5% of the deposit, capped there even if
+                more is sent - any excess is refunded immediately); the next <Code>request_release</Code> refunds
+                the bond if the verdict changes, forfeits it to the other party if it doesn&apos;t.
               </Method>
               <Method name="refund_expired" args="engagement_id" note="Write · after deadline, status created or accepted">
                 Refunds the deposit to the depositor if nothing was ever submitted.
