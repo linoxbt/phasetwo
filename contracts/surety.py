@@ -26,6 +26,13 @@ MAX_COMMENT_CHARS = 2000
 # dispute ever raised would sit with its deposit locked forever.
 APPEAL_WINDOW_SECONDS = 3 * 24 * 60 * 60
 
+# A dispute forces a re-judgment of the same (locked) evidence rather than
+# introducing new evidence - see raise_dispute. Capping rounds guarantees the
+# process eventually terminates; the bond makes each round costly enough that
+# disputing without a genuine chance of the verdict flipping is a bad bet.
+MAX_DISPUTE_ROUNDS = 3
+DISPUTE_BOND_BPS = 500  # 5% of the deposit
+
 
 class Status:
     CREATED = "created"
@@ -72,14 +79,21 @@ class Engagement:
     # milestone exactly like any other engagement; this field exists purely
     # for the frontend to group and display siblings.
     parent_id: u256
-    # "" = unrestricted. Non-empty binds every evidence URL (initial submission
-    # and any later dispute's additional_evidence) to this prefix, committed to
-    # at creation time - a repo URL, an ipfs:// prefix, a specific domain. The
-    # depositor picks it; the contract just enforces whatever they committed to.
+    # Required, non-empty. Binds every evidence URL submitted in
+    # submit_deliverable to this prefix, committed to at creation time - a
+    # repo URL, an ipfs:// prefix, a specific domain. Evidence is locked after
+    # that one submission - raise_dispute can no longer introduce new URLs,
+    # only contest the already-committed evidence and force a re-judgment.
     allowed_evidence_prefix: str
     # 0 until request_release lands a "met" verdict. Starts the same appeal
     # window rejected_at does - see Status.APPROVED / settle_approved.
     approved_at: u256
+    # The following three fields are only meaningful while dispute_bond > 0,
+    # i.e. between a raise_dispute call and the request_release that resolves
+    # it - see raise_dispute and request_release's bond-resolution step.
+    dispute_bond: u256
+    disputer: Address
+    pre_dispute_status: str
 
 
 class Surety(gl.Contract):
@@ -137,6 +151,9 @@ class Surety(gl.Contract):
                     f"committed to at creation ('{eng.allowed_evidence_prefix}')"
                 )
 
+    def _required_dispute_bond(self, eng: Engagement) -> u256:
+        return u256(max(1, eng.amount * DISPUTE_BOND_BPS // 10000))
+
     # ------------------------------------------------------------------
     # Flow A - create engagement
     # ------------------------------------------------------------------
@@ -178,6 +195,13 @@ class Surety(gl.Contract):
             if root.parent_id != 0:
                 raise gl.vm.UserError(f"{ERROR_EXPECTED} parent_id must point at a root engagement, not another milestone")
 
+        allowed_evidence_prefix = allowed_evidence_prefix.strip()
+        if not allowed_evidence_prefix:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} allowed_evidence_prefix is required - commit to an evidence "
+                f"source (a repo, an ipfs:// reference, a domain) at creation time"
+            )
+
         engagement_id = self.next_id
         self.next_id = u256(self.next_id + 1)
 
@@ -198,8 +222,11 @@ class Surety(gl.Contract):
             comments=[],
             rejected_at=u256(0),
             parent_id=parent,
-            allowed_evidence_prefix=allowed_evidence_prefix.strip(),
+            allowed_evidence_prefix=allowed_evidence_prefix,
             approved_at=u256(0),
+            dispute_bond=u256(0),
+            disputer=Address("0x0000000000000000000000000000000000000000"),
+            pre_dispute_status="",
         )
         self.engagements[engagement_id] = eng
         self.all_ids.append(engagement_id)
@@ -243,10 +270,11 @@ class Surety(gl.Contract):
         eng = self._get(u256(engagement_id))
         if gl.message.sender_address != eng.counterparty:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Only the counterparty may submit a deliverable")
-        # One shot only: once submitted, evidence can't be silently swapped
-        # before anyone has judged it. Changing evidence after that point
-        # goes through raise_dispute's additional_evidence instead, which is
-        # visible to both parties and re-triggers judgment explicitly. Also
+        # One shot only, permanently: evidence is locked from here on. A
+        # dispute can contest this evidence and force a re-judgment of it
+        # (see raise_dispute), but can never introduce new URLs - that's the
+        # immutable-commitment guarantee the depositor's allowed_evidence_prefix
+        # is meant to provide. Also
         # requires ACCEPTED, not just CREATED - the counterparty must accept
         # the engagement before starting work (see accept_engagement).
         self._require_status(eng, (Status.ACCEPTED,), "submit")
@@ -282,6 +310,7 @@ class Surety(gl.Contract):
     def request_release(self, engagement_id: int) -> None:
         eng = self._get(u256(engagement_id))
         self._require_status(eng, (Status.SUBMITTED, Status.DISPUTED), "request release")
+        was_disputed = eng.status == Status.DISPUTED
         if len(eng.evidence_urls) == 0:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} No evidence URLs on file")
 
@@ -349,14 +378,27 @@ Respond with strict JSON only, no other text:
             eng.status = Status.REJECTED
             eng.rejected_at = self._now()
 
+        # Resolve the previous round's dispute bond: the disputer forced a
+        # re-judgment of the same (locked) evidence, betting the verdict
+        # would come out differently. If it did, they were right - refund
+        # them. If it didn't, the dispute was frivolous - the bond goes to
+        # the other party as compensation for the delay.
+        if was_disputed and eng.dispute_bond > 0:
+            if eng.status != eng.pre_dispute_status:
+                self._pay(eng.disputer, eng.dispute_bond)
+            else:
+                other = eng.counterparty if eng.disputer == eng.depositor else eng.depositor
+                self._pay(other, eng.dispute_bond)
+            eng.dispute_bond = u256(0)
+
         self._save(eng)
 
     # ------------------------------------------------------------------
     # Flow D - dispute
     # ------------------------------------------------------------------
 
-    @gl.public.write
-    def raise_dispute(self, engagement_id: int, additional_evidence: DynArray[str], reason: str) -> None:
+    @gl.public.write.payable
+    def raise_dispute(self, engagement_id: int, reason: str) -> None:
         eng = self._get(u256(engagement_id))
         sender = gl.message.sender_address
         if sender != eng.depositor and sender != eng.counterparty:
@@ -376,13 +418,21 @@ Respond with strict JSON only, no other text:
             raise gl.vm.UserError(
                 f"{ERROR_EXPECTED} The appeal window has closed - call settle_approved to finalize the release"
             )
-        self._require_evidence_bound(eng, additional_evidence)
+        if eng.dispute_round >= MAX_DISPUTE_ROUNDS:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Maximum dispute rounds ({MAX_DISPUTE_ROUNDS}) reached for this "
+                f"engagement - settle once the appeal window closes, or escalate through GenLayer's "
+                f"protocol-level appeal"
+            )
+        required_bond = self._required_dispute_bond(eng)
+        if gl.message.value < required_bond:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} A dispute bond of at least {required_bond} is required (sent {gl.message.value})"
+            )
 
-        for url in additional_evidence:
-            if len(eng.evidence_urls) >= MAX_EVIDENCE_URLS:
-                break
-            eng.evidence_urls.append(url)
-
+        eng.dispute_bond = gl.message.value
+        eng.disputer = sender
+        eng.pre_dispute_status = eng.status
         eng.notes = f"{eng.notes}\n\n[Dispute round {eng.dispute_round + 1}] {reason}".strip()
         eng.dispute_round = u256(eng.dispute_round + 1)
         eng.status = Status.DISPUTED
@@ -522,6 +572,9 @@ Respond with strict JSON only, no other text:
             "parent_id": int(eng.parent_id),
             "allowed_evidence_prefix": eng.allowed_evidence_prefix,
             "approved_at": int(eng.approved_at),
+            "dispute_bond": int(eng.dispute_bond),
+            "disputer": eng.disputer,
+            "pre_dispute_status": eng.pre_dispute_status,
         }
 
     @gl.public.view
@@ -541,6 +594,15 @@ Respond with strict JSON only, no other text:
     @gl.public.view
     def get_appeal_window_seconds(self) -> int:
         return int(self.appeal_window_seconds)
+
+    @gl.public.view
+    def get_max_dispute_rounds(self) -> int:
+        return MAX_DISPUTE_ROUNDS
+
+    @gl.public.view
+    def get_required_dispute_bond(self, engagement_id: int) -> int:
+        eng = self._get(u256(engagement_id))
+        return int(self._required_dispute_bond(eng))
 
 
 def _parse_verdict(raw) -> dict:

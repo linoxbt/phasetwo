@@ -21,7 +21,7 @@ def test_request_release_rejects_mismatched_evidence():
     counterparty_contract = as_account(contract, counterparty)
 
     tx = contract.create_engagement(
-        args=[counterparty.address, SPEC_MISMATCHED, future_deadline()]
+        args=[counterparty.address, SPEC_MISMATCHED, future_deadline(), 0, EVIDENCE_URL]
     ).transact(value=1000)
     assert tx_execution_succeeded(tx), f"create_engagement failed: {tx}"
 

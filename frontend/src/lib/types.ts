@@ -38,6 +38,9 @@ export interface Engagement {
   parent_id: number
   allowed_evidence_prefix: string
   approved_at: number
+  dispute_bond: number
+  disputer: `0x${string}`
+  pre_dispute_status: string
 }
 
 export const STATUS_LABEL: Record<StatusValue, string> = {

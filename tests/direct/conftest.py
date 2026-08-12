@@ -15,3 +15,21 @@ def deploy_surety(direct_vm, direct_deploy):
 
 def future_deadline(days: int = 7) -> int:
     return NOW_TS + days * ONE_DAY
+
+
+def create_engagement(
+    contract,
+    direct_vm,
+    depositor,
+    counterparty,
+    spec="Ship it",
+    parent_id=0,
+    allowed_evidence_prefix="https://example.com",
+):
+    direct_vm.sender = depositor
+    direct_vm.value = 1000
+    eid = contract.create_engagement(
+        counterparty, spec, future_deadline(), parent_id=parent_id, allowed_evidence_prefix=allowed_evidence_prefix
+    )
+    direct_vm.value = 0
+    return eid

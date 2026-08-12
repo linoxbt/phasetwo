@@ -17,7 +17,9 @@ def test_refund_expired_after_acceptance_but_no_submission():
     counterparty_contract = as_account(contract, counterparty)
 
     deadline = future_deadline(seconds=5)
-    tx = contract.create_engagement(args=[counterparty.address, "Ship it", deadline]).transact(value=1000)
+    tx = contract.create_engagement(
+        args=[counterparty.address, "Ship it", deadline, 0, "https://example.com"]
+    ).transact(value=1000)
     assert tx_execution_succeeded(tx), f"create_engagement failed: {tx}"
 
     eid = 1

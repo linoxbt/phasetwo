@@ -4,7 +4,9 @@ from conftest import deploy_surety, future_deadline
 def _create(contract, direct_vm, depositor, counterparty, deadline_days=1):
     direct_vm.sender = depositor
     direct_vm.value = 1000
-    eid = contract.create_engagement(counterparty, "Ship it", future_deadline(deadline_days))
+    eid = contract.create_engagement(
+        counterparty, "Ship it", future_deadline(deadline_days), allowed_evidence_prefix="https://example.com"
+    )
     direct_vm.value = 0
     return eid
 

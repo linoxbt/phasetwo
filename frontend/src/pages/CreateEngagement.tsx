@@ -189,6 +189,10 @@ export function CreateEngagement() {
       setFormError('Pick a deadline in the future.')
       return
     }
+    if (!allowedEvidencePrefix.trim()) {
+      setFormError('Set what evidence is acceptable - a repo URL, an ipfs:// reference, or a domain.')
+      return
+    }
     if (splitMilestones) {
       if (milestoneRows.some((r) => !r.label.trim())) {
         setFormError('Give every milestone a label.')
@@ -395,7 +399,7 @@ export function CreateEngagement() {
           </div>
 
           <div>
-            <Label>Restrict acceptable evidence to (optional)</Label>
+            <Label>Restrict acceptable evidence to</Label>
             <Input
               type="text"
               value={allowedEvidencePrefix}
@@ -403,9 +407,10 @@ export function CreateEngagement() {
               placeholder="e.g. https://github.com/your-org/your-repo"
             />
             <p className="mt-1.5 text-xs text-ink-soft">
-              If set, every evidence URL the counterparty submits (initially or in a dispute) must start with
-              this - locks in what counts as valid evidence before any work begins, instead of trusting whatever
-              link shows up later. Leave blank to accept any URL.
+              Required. The evidence URL the counterparty submits must start with this - locked in before any
+              work begins, instead of trusting whatever link shows up later. Evidence can't be added or changed
+              after that one submission, even in a dispute - a repo URL, an ipfs:// reference, or a specific
+              domain all work.
             </p>
           </div>
         </Section>

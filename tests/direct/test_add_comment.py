@@ -1,12 +1,4 @@
-from conftest import deploy_surety, future_deadline
-
-
-def _create(contract, direct_vm, depositor, counterparty, spec="Ship it"):
-    direct_vm.sender = depositor
-    direct_vm.value = 1000
-    eid = contract.create_engagement(counterparty, spec, future_deadline())
-    direct_vm.value = 0
-    return eid
+from conftest import deploy_surety, create_engagement as _create
 
 
 def test_add_comment_by_depositor_and_counterparty(direct_vm, direct_deploy, direct_alice, direct_bob):

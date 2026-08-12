@@ -6,7 +6,9 @@ def test_create_engagement_success(direct_vm, direct_deploy, direct_alice, direc
     direct_vm.sender = direct_alice
     direct_vm.value = 1000
 
-    eid = contract.create_engagement(direct_bob, "Ship a working login page", future_deadline())
+    eid = contract.create_engagement(
+        direct_bob, "Ship a working login page", future_deadline(), allowed_evidence_prefix="https://example.com"
+    )
 
     # SDK path is only set up once direct_deploy() runs, so import Address here
     # rather than at module level (matches how gltest's own create_address()
@@ -63,7 +65,19 @@ def test_create_engagement_ids_increment(direct_vm, direct_deploy, direct_alice,
     direct_vm.sender = direct_alice
     direct_vm.value = 1000
 
-    id1 = contract.create_engagement(direct_bob, "First", future_deadline())
-    id2 = contract.create_engagement(direct_bob, "Second", future_deadline())
+    id1 = contract.create_engagement(direct_bob, "First", future_deadline(), allowed_evidence_prefix="https://example.com")
+    id2 = contract.create_engagement(direct_bob, "Second", future_deadline(), allowed_evidence_prefix="https://example.com")
 
     assert id2 == id1 + 1
+
+
+def test_create_engagement_requires_evidence_prefix(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_surety(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    direct_vm.value = 1000
+
+    with direct_vm.expect_revert("allowed_evidence_prefix is required"):
+        contract.create_engagement(direct_bob, "Ship it", future_deadline(), allowed_evidence_prefix="")
+
+    with direct_vm.expect_revert("allowed_evidence_prefix is required"):
+        contract.create_engagement(direct_bob, "Ship it", future_deadline(), allowed_evidence_prefix="   ")

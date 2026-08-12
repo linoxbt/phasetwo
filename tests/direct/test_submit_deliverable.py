@@ -1,18 +1,10 @@
-from conftest import deploy_surety, future_deadline
+from conftest import deploy_surety, future_deadline, create_engagement as _create
 
 # NOTE: "submit after the deadline is blocked" can't be exercised in direct
 # mode - same gltest harness gap documented in test_refund_expired.py
 # (warp() doesn't propagate into message_raw['datetime'] for calls after
 # direct_deploy()). Covered instead by integration tests against a running
 # network, where wall-clock time actually advances.
-
-
-def _create(contract, direct_vm, depositor, counterparty, spec="Ship it"):
-    direct_vm.sender = depositor
-    direct_vm.value = 1000
-    eid = contract.create_engagement(counterparty, spec, future_deadline())
-    direct_vm.value = 0
-    return eid
 
 
 def _accept(contract, direct_vm, counterparty, eid):
@@ -26,12 +18,12 @@ def test_submit_deliverable_success(direct_vm, direct_deploy, direct_alice, dire
     _accept(contract, direct_vm, direct_bob, eid)
 
     direct_vm.sender = direct_bob
-    contract.submit_deliverable(eid, ["https://github.com/example/repo"], "done, see repo")
+    contract.submit_deliverable(eid, ["https://example.com/repo"], "done, see repo")
 
     eng = contract.get_engagement(eid)
     assert eng["status"] == "submitted"
     assert eng["notes"] == "done, see repo"
-    assert list(eng["evidence_urls"]) == ["https://github.com/example/repo"]
+    assert list(eng["evidence_urls"]) == ["https://example.com/repo"]
 
 
 def test_submit_deliverable_only_counterparty(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
@@ -110,16 +102,3 @@ def test_submit_deliverable_enforces_bound_evidence_prefix(direct_vm, direct_dep
     eng = contract.get_engagement(eid)
     assert eng["status"] == "submitted"
     assert eng["allowed_evidence_prefix"] == "https://github.com/example/repo"
-
-
-def test_submit_deliverable_unrestricted_when_no_prefix_bound(direct_vm, direct_deploy, direct_alice, direct_bob):
-    # Default behavior (empty prefix) is unchanged - any URL is accepted.
-    contract = deploy_surety(direct_vm, direct_deploy)
-    eid = _create(contract, direct_vm, direct_alice, direct_bob)
-    _accept(contract, direct_vm, direct_bob, eid)
-
-    direct_vm.sender = direct_bob
-    contract.submit_deliverable(eid, ["https://anywhere.example.com"], "notes")
-    eng = contract.get_engagement(eid)
-    assert eng["status"] == "submitted"
-    assert eng["allowed_evidence_prefix"] == ""

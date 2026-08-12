@@ -8,15 +8,15 @@ Live on both **GenLayer Asimov Testnet** and **GenLayer Studio Network**, switch
 
 ## How it works
 
-1. **Create the engagement** — the depositor locks a GEN payment, names the counterparty, sets a deadline, and writes the deliverable spec in plain English.
+1. **Create the engagement** — the depositor locks a GEN payment, names the counterparty, sets a deadline, writes the deliverable spec in plain English, and commits to an evidence source (a repo, an `ipfs://` reference, a domain) that every future evidence URL must match. This commitment is required, not optional — see [Why evidence is locked at creation](#why-evidence-is-locked-at-creation).
 2. **Accept, or decline** — the counterparty must explicitly accept before doing any work; `submit_deliverable` isn't callable until they do. Declining requires a reason and refunds the deposit to the depositor immediately.
-3. **Submit the evidence** — once accepted, the counterparty submits one or more URLs (a repo, a live deployment, a document) as checkable proof of work.
+3. **Submit the evidence, once** — once accepted, the counterparty submits one or more URLs matching the bound prefix as checkable proof of work. This is a one-time, permanent commitment — evidence can never be added to or changed after this call, not even during a dispute.
 4. **Validators judge live** — anyone can trigger `request_release`. A random set of GenLayer validators — each often running a different underlying model — independently fetch the evidence themselves and compare it against the spec.
-5. **Approved, or rejected — either way, not final yet** — a "met" verdict does *not* pay out on the spot. It opens the same kind of 3-day appeal window a rejection does: either party can still dispute it, and only then does judgment run again with real effect. This is deliberate — see [Why releases aren't instant](#why-releases-arent-instant).
+5. **Approved, or rejected — either way, not final yet** — a "met" verdict does *not* pay out on the spot. It opens the same kind of 3-day appeal window a rejection does: either party can still dispute it (for a forfeitable bond, up to 3 times), and only then does judgment run again with real effect. This is deliberate — see [Why releases aren't instant](#why-releases-arent-instant) and [Why disputes are capped and cost a bond](#why-disputes-are-capped-and-cost-a-bond).
 6. **Settle** — once the appeal window closes on either an approval or a rejection with no dispute raised, anyone can permissionlessly finalize it: the deposit moves to the counterparty (approval) or back to the depositor (rejection). Nothing can sit stuck forever, and nothing moves before its window closes uncontested.
 7. **Deterministic refund** — if the deadline passes with nothing submitted (before or after acceptance), the deposit refunds automatically. No judgment call, no waiting on anyone.
 
-The two parties can also message each other privately through an end-to-end encrypted comment thread on each engagement — see [Contract](#contract) below. A depositor can also optionally bind acceptable evidence to a specific prefix (a repo, an `ipfs://` reference, a domain) at creation time — see the `create_engagement` row below.
+The two parties can also message each other privately through an end-to-end encrypted comment thread on each engagement — see [Contract](#contract) below.
 
 Consensus on the verdict is reached through GenLayer's **Optimistic Democracy**: validators don't need to produce byte-identical output, only agree on the *substance* of the judgment (the [Equivalence Principle](https://docs.genlayer.com)), which makes it resistant to a single model being fooled or hallucinating.
 
@@ -35,21 +35,23 @@ A single Intelligent Contract (class `Surety`) owns the full escrow lifecycle:
 
 | Method | Type | Description |
 |---|---|---|
-| `create_engagement(counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix="")` | write · payable | Locks the sent value as the deposit, opens a new engagement. A non-zero `parent_id` links it as one installment of the milestone plan rooted at that engagement id (same depositor/counterparty, and that engagement must itself be a root) - every other method treats a milestone exactly like any other engagement. A non-empty `allowed_evidence_prefix` binds every evidence URL (initial submission and any dispute's additional evidence) to that prefix, committed to before any work begins - a repo URL, an `ipfs://` reference, a specific domain. Empty means unrestricted |
+| `create_engagement(counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix)` | write · payable | Locks the sent value as the deposit, opens a new engagement. A non-zero `parent_id` links it as one installment of the milestone plan rooted at that engagement id (same depositor/counterparty, and that engagement must itself be a root) - every other method treats a milestone exactly like any other engagement. `allowed_evidence_prefix` is **required** - a repo URL, an `ipfs://` reference, a specific domain - and binds every evidence URL `submit_deliverable` will ever accept, committed to before any work begins |
 | `accept_engagement(engagement_id)` | write · counterparty only | Accepts the engagement, unlocking `submit_deliverable`. Moves no funds |
 | `decline_engagement(engagement_id, reason)` | write · counterparty only | Declines with a required reason and refunds the deposit to the depositor immediately |
-| `submit_deliverable(engagement_id, evidence_urls, notes)` | write · counterparty only, one-time | Attaches evidence, moves the engagement to `submitted`. Requires `accepted` status first; blocked once the deadline has passed, after the first submission, or if a URL doesn't match a bound `allowed_evidence_prefix` — further evidence goes through `raise_dispute` |
-| `request_release(engagement_id)` | write | Triggers validator judgment — fetches evidence live, moves to `approved` or `rejected` based on consensus. Neither outcome pays out yet - see `settle_approved`/`settle_rejected` |
-| `raise_dispute(engagement_id, evidence_urls, reason)` | write · either party | Appends evidence (also subject to the bound evidence prefix, if any) and increments the dispute round from `approved` or `rejected` — doesn't re-run judgment itself, a subsequent `request_release` call does. Blocked once that status's appeal window has closed |
+| `submit_deliverable(engagement_id, evidence_urls, notes)` | write · counterparty only, one-time | Attaches evidence, moves the engagement to `submitted`. Requires `accepted` status first; blocked once the deadline has passed, after the first submission, or if a URL doesn't match the bound `allowed_evidence_prefix`. This is the only place evidence is ever set - it's locked from here on, including through every future dispute |
+| `request_release(engagement_id)` | write | Triggers validator judgment — fetches the locked evidence live, moves to `approved` or `rejected` based on consensus. Neither outcome pays out yet - see `settle_approved`/`settle_rejected`. If this resolves a prior dispute, it also settles that dispute's bond - see `raise_dispute` |
+| `raise_dispute(engagement_id, reason)` | write · either party, payable | Contests the current `approved`/`rejected` verdict and forces a re-judgment of the same (locked) evidence - increments `dispute_round`, blocked once `dispute_round` reaches `get_max_dispute_rounds()` or that status's appeal window has closed. Requires a bond of at least `get_required_dispute_bond(engagement_id)` (5% of the deposit); the next `request_release` refunds it if the verdict changes, forfeits it to the other party if it doesn't |
 | `refund_expired(engagement_id)` | write | Refunds the deposit if the deadline passed with nothing ever submitted, whether the engagement was still `created` or already `accepted` |
 | `settle_approved(engagement_id)` | write · permissionless | Finalizes an approved engagement once its 3-day appeal window closes with no dispute raised — pays the deposit to the counterparty. This is the *only* way funds ever reach the counterparty |
 | `settle_rejected(engagement_id)` | write · permissionless | Finalizes a rejected engagement once its 3-day appeal window closes with no dispute raised — refunds the deposit to the depositor |
 | `add_comment(engagement_id, text)` | write · either party | Posts a message to the engagement's comment thread. The app end-to-end encrypts `text` client-side before calling this, so only the depositor and counterparty can read it — see [Comment privacy](#comment-privacy) |
 | `register_pubkey(pubkey)` | write · global, once per address | Publishes the caller's comment-encryption public key, reusable across every engagement that address is ever a party to |
 | `get_pubkey(address)` | view | An address's registered comment-encryption public key, or `""` if it hasn't registered one |
-| `get_engagement(engagement_id)` | view | Full engagement record, including its comment thread, bound evidence prefix, and approval/rejection timestamps |
+| `get_engagement(engagement_id)` | view | Full engagement record, including its comment thread, bound evidence prefix, approval/rejection timestamps, and the current dispute's bond/disputer/pre-dispute-status while one is open |
 | `list_engagements_for(address)` | view | Engagement ids where the address is depositor or counterparty |
 | `get_appeal_window_seconds()` | view | The configured appeal window, in seconds (3 days by default) |
+| `get_max_dispute_rounds()` | view | The hard cap on `dispute_round` per engagement (3) |
+| `get_required_dispute_bond(engagement_id)` | view | The minimum bond `raise_dispute` requires for this engagement right now (5% of its deposit) |
 | `list_all_ids()` | view | All engagement ids (backs the public transparency page) |
 
 Validator judgment uses GenLayer's comparative equivalence principle: each validator independently re-fetches the evidence and re-runs the judgment prompt, then an LLM-mediated comparison checks that the `met` verdict and reasoning substantively agree — no validator's answer is ever trusted unverified.
@@ -61,6 +63,20 @@ Earlier versions of this contract paid the counterparty the instant a "met" verd
 The fix mirrors a pattern this contract already had for rejections. A rejection doesn't refund the depositor immediately either — it opens a 3-day appeal window first, and only `settle_rejected` (called once that window closes undisputed) actually moves the money. Approvals now work exactly the same way: `request_release` landing on `approved` doesn't pay anyone; `settle_approved` does, and only after its own 3-day window closes with no dispute raised. A dispute raised during that window moves the engagement to `disputed` with the deposit still fully locked, and the next verdict — approval or rejection — still has to go through its own settlement step before anything moves. Funds change hands in exactly four places in the whole contract: `settle_approved`, `settle_rejected`, `decline_engagement`, and `refund_expired` — never inside `request_release` or `raise_dispute` themselves.
 
 The tradeoff is honest: a clean approval now takes as long to finalize as a clean rejection always did (3 days by default, permissionlessly settleable by anyone the moment the window closes) instead of being instant. That's the cost of a dispute window that actually does something.
+
+### Why evidence is locked at creation
+
+Binding evidence to a prefix only helps if the prefix is actually set, and if a dispute can't quietly introduce evidence that was never agreed to. Two earlier gaps, closed together:
+
+`allowed_evidence_prefix` is now **required** at `create_engagement` - there's no more unrestricted default to fall back on (or forget to set). And `submit_deliverable` is a one-shot call: whatever evidence URLs go in there are the only evidence this engagement will ever have. `raise_dispute` no longer takes an evidence parameter at all - a dispute can contest the existing evidence and force a re-judgment of it, but it can never add, swap, or extend what's on file. The commitment made at creation is the commitment that gets judged, every time.
+
+### Why disputes are capped and cost a bond
+
+An unbounded, free dispute path is a liveness problem: nothing stops either party from disputing forever, so the contract could never structurally guarantee an engagement actually settles. Two changes close that:
+
+**Bounded** - `dispute_round` is capped at `get_max_dispute_rounds()` (3). Once reached, `raise_dispute` is blocked outright; the engagement can only be settled via `settle_approved`/`settle_rejected` once its window closes, or escalated through GenLayer's protocol-level appeal. This is what actually guarantees the process terminates - not just discourages abuse.
+
+**Economically costly** - every dispute requires a bond (`get_required_dispute_bond`, 5% of the deposit). Since evidence is locked (see above), a dispute can't introduce new proof - it can only bet that re-judging the *same* evidence lands differently. `gl.eq_principle.prompt_comparative` already requires independent validators to agree, so re-judging identical evidence reliably reproduces the same verdict unless the original judgment was genuinely a misfire. `request_release` resolves the bond the moment it produces the next verdict: refunded to the disputer if the outcome changed (the dispute was right), forfeited to the other party if it didn't (the dispute was frivolous). A clean re-roll is a real error-correction path; a baseless one is an expensive bet.
 
 ### Comment privacy
 
@@ -90,8 +106,8 @@ App pages share a collapsible sidebar shell; a network switcher in the sidebar l
 
 | Network | Chain id | Contract address | Notes |
 |---|---|---|---|
-| **Asimov Testnet** | `4221` | `0x6D6B9Dca0c1cD8fCeB57c4158F2c2Dd73960a2D0` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
-| **Studio Network** | `61999` | `0x15f6489770e57196b66eE1e98f7080d2CeF870F9` | Hosted GenLayer Studio. Gasless — no funded account needed |
+| **Asimov Testnet** | `4221` | `0xb4A4Ad2770419Eb9B87537460c506429A5256340` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
+| **Studio Network** | `61999` | `0xcB9FbeD708384E40D7ED855785D88Cb51f9860AC` | Hosted GenLayer Studio. Gasless — no funded account needed |
 
 ## Getting started
 
@@ -113,8 +129,8 @@ npm run dev
 `.env.local`:
 
 ```bash
-VITE_CONTRACT_ADDRESS_ASIMOV=0x6D6B9Dca0c1cD8fCeB57c4158F2c2Dd73960a2D0
-VITE_CONTRACT_ADDRESS_STUDIONET=0x15f6489770e57196b66eE1e98f7080d2CeF870F9
+VITE_CONTRACT_ADDRESS_ASIMOV=0xb4A4Ad2770419Eb9B87537460c506429A5256340
+VITE_CONTRACT_ADDRESS_STUDIONET=0xcB9FbeD708384E40D7ED855785D88Cb51f9860AC
 VITE_REOWN_PROJECT_ID=<your project id from https://dashboard.reown.com>
 ```
 

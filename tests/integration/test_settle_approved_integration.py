@@ -17,9 +17,9 @@ APPEAL_WINDOW_SECONDS = 5  # deployed short so the test can wait it out for real
 
 
 def _approve_engagement(contract, counterparty_contract, counterparty_address):
-    tx = contract.create_engagement(args=[counterparty_address, SPEC_MATCHING, future_deadline()]).transact(
-        value=1000
-    )
+    tx = contract.create_engagement(
+        args=[counterparty_address, SPEC_MATCHING, future_deadline(), 0, EVIDENCE_URL]
+    ).transact(value=1000)
     assert tx_execution_succeeded(tx), f"create_engagement failed: {tx}"
 
     eid = 1

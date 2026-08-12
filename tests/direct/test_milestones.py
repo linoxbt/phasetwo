@@ -1,12 +1,4 @@
-from conftest import deploy_surety, future_deadline
-
-
-def _create(contract, direct_vm, depositor, counterparty, spec="Milestone", parent_id=0):
-    direct_vm.sender = depositor
-    direct_vm.value = 1000
-    eid = contract.create_engagement(counterparty, spec, future_deadline(), parent_id=parent_id)
-    direct_vm.value = 0
-    return eid
+from conftest import deploy_surety, create_engagement as _create
 
 
 def test_create_engagement_defaults_to_standalone(direct_vm, direct_deploy, direct_alice, direct_bob):

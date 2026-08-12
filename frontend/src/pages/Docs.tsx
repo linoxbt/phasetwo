@@ -120,17 +120,19 @@ export function Docs() {
           <Section id="how-it-works" title="How it works">
             <ol className="space-y-6">
               <Step n={1} title="Create the engagement">
-                The depositor locks the payment, names the counterparty address, sets a deadline, and writes the
-                deliverable spec - the exact criteria validators will judge against later.
+                The depositor locks the payment, names the counterparty address, sets a deadline, writes the
+                deliverable spec, and commits to an evidence source - a repo, a domain, an <Code>ipfs://</Code>{' '}
+                reference. This commitment is required, and every evidence URL from here on must match it.
               </Step>
               <Step n={2} title="Accept, or decline">
                 The counterparty must explicitly accept before doing any work - <Code>submit_deliverable</Code>{' '}
                 isn&apos;t callable until they do. Declining requires a reason and refunds the deposit to the
                 depositor immediately; no work, no judgment, no waiting.
               </Step>
-              <Step n={3} title="Submit the evidence">
-                Once accepted, the counterparty submits one or more evidence URLs (a repo, a live deployment, a
-                document) plus optional notes for the reviewer.
+              <Step n={3} title="Submit the evidence, once">
+                Once accepted, the counterparty submits one or more evidence URLs matching the bound source, plus
+                optional notes. This is permanent - evidence can never be added to or changed after this, not
+                even during a dispute.
               </Step>
               <Step n={4} title="Validators judge live">
                 Anyone can trigger <Code>request_release</Code>. Five independent validators fetch the evidence
@@ -140,9 +142,10 @@ export function Docs() {
               </Step>
               <Step n={5} title="Approved, or rejected - either way, not final yet">
                 A pass doesn&apos;t pay out on the spot. It opens the same kind of 3-day appeal window a
-                rejection does; either party can still raise a dispute with additional evidence during it, then
+                rejection does; either party can still dispute it for a forfeitable bond (up to 3 times), then
                 request judgment again, or escalate through GenLayer&apos;s protocol-level appeal (Asimov Testnet
-                only). This is deliberate - see <Code>Can a dispute actually reverse a payout?</Code> below.
+                only). This is deliberate - see <Code>Can a dispute actually reverse a payout?</Code> and{' '}
+                <Code>What stops someone from disputing forever?</Code> below.
               </Step>
               <Step n={6} title="Settle">
                 Once the appeal window closes on either an approval or a rejection with no dispute raised, anyone
@@ -209,8 +212,8 @@ export function Docs() {
                 <Code>rejected</Code> - validators failed the deliverable; a 3-day appeal window opens.
               </li>
               <li>
-                <Code>disputed</Code> - a party added evidence and re-triggered judgment after an approval or a
-                rejection.
+                <Code>disputed</Code> - a party contested the verdict (backed by a bond) and re-triggered judgment
+                of the same, locked evidence after an approval or a rejection.
               </li>
               <li>
                 <Code>released</Code> - an approval&apos;s appeal window closed with no dispute raised; deposit
@@ -232,13 +235,13 @@ export function Docs() {
             <div className="space-y-4">
               <Method
                 name="create_engagement"
-                args="counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix=&quot;&quot;"
+                args="counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix"
                 note="Write · payable"
               >
-                Locks the sent value as the deposit and opens a new engagement. An optional{' '}
-                <Code>allowed_evidence_prefix</Code> binds every evidence URL - the initial submission and any
-                dispute&apos;s additional evidence - to that prefix, committed to before any work begins: a repo
-                URL, an <Code>ipfs://</Code> reference, a specific domain. Left empty, evidence is unrestricted.
+                Locks the sent value as the deposit and opens a new engagement. <Code>allowed_evidence_prefix</Code>{' '}
+                is required and binds every evidence URL <Code>submit_deliverable</Code> will ever accept,
+                committed to before any work begins: a repo URL, an <Code>ipfs://</Code> reference, a specific
+                domain.
               </Method>
               <Method name="accept_engagement" args="engagement_id" note="Write · counterparty only">
                 Accepts the engagement, unlocking <Code>submit_deliverable</Code>. Moves no funds.
@@ -249,20 +252,23 @@ export function Docs() {
               </Method>
               <Method name="submit_deliverable" args="engagement_id, evidence_urls, notes" note="Write · counterparty only, one-time">
                 Attaches evidence and moves the engagement to <Code>submitted</Code>. Requires the engagement to be{' '}
-                <Code>accepted</Code> first, can only be called once, and every URL must match a bound{' '}
-                <Code>allowed_evidence_prefix</Code> if one was set at creation - updating evidence after that goes
-                through <Code>raise_dispute</Code> instead.
+                <Code>accepted</Code> first, can only be called once, and every URL must match the bound{' '}
+                <Code>allowed_evidence_prefix</Code>. This is the only place evidence is ever set - it&apos;s
+                locked from here on, including through every future dispute.
               </Method>
               <Method name="request_release" args="engagement_id" note="Write · triggers validator judgment">
-                Runs the validator comparison against the spec; moves the engagement to <Code>approved</Code> or{' '}
-                <Code>rejected</Code> based on consensus. Neither outcome pays out yet - see{' '}
-                <Code>settle_approved</Code> / <Code>settle_rejected</Code>.
+                Runs the validator comparison against the (locked) evidence and spec; moves the engagement to{' '}
+                <Code>approved</Code> or <Code>rejected</Code> based on consensus. Neither outcome pays out yet -
+                see <Code>settle_approved</Code> / <Code>settle_rejected</Code>. If this resolves a prior dispute,
+                it also settles that dispute&apos;s bond.
               </Method>
-              <Method name="raise_dispute" args="engagement_id, evidence_urls, reason" note="Write · depositor or counterparty">
-                Appends evidence (also subject to the bound evidence prefix, if any) and increments the dispute
-                round after an approval or a rejection. Doesn&apos;t re-run judgment itself - a subsequent{' '}
-                <Code>request_release</Code> call does that. Blocked once that status&apos;s appeal window has
-                closed.
+              <Method name="raise_dispute" args="engagement_id, reason" note="Write · depositor or counterparty, payable">
+                Contests the current verdict and forces a re-judgment of the same evidence - increments the
+                dispute round, blocked once it reaches <Code>get_max_dispute_rounds()</Code> (3) or that
+                status&apos;s appeal window has closed. Requires a bond of at least{' '}
+                <Code>get_required_dispute_bond(engagement_id)</Code> (5% of the deposit); the next{' '}
+                <Code>request_release</Code> refunds it if the verdict changes, forfeits it to the other party if
+                it doesn&apos;t.
               </Method>
               <Method name="refund_expired" args="engagement_id" note="Write · after deadline, status created or accepted">
                 Refunds the deposit to the depositor if nothing was ever submitted.
@@ -288,7 +294,8 @@ export function Docs() {
                 registered one.
               </Method>
               <Method name="get_engagement" args="engagement_id" note="View">
-                Returns the full engagement record.
+                Returns the full engagement record, including the current dispute&apos;s bond, disputer, and
+                pre-dispute status while one is open.
               </Method>
               <Method name="list_engagements_for" args="address" note="View">
                 Returns engagement ids where the address is depositor or counterparty.
@@ -298,6 +305,13 @@ export function Docs() {
               </Method>
               <Method name="get_appeal_window_seconds" args="" note="View">
                 Returns the configured appeal window, in seconds (3 days by default).
+              </Method>
+              <Method name="get_max_dispute_rounds" args="" note="View">
+                Returns the hard cap on dispute rounds per engagement (3).
+              </Method>
+              <Method name="get_required_dispute_bond" args="engagement_id" note="View">
+                Returns the minimum bond <Code>raise_dispute</Code> requires for this engagement right now (5% of
+                its deposit).
               </Method>
             </div>
           </Section>
@@ -363,6 +377,19 @@ export function Docs() {
                 never inside <Code>request_release</Code> or <Code>raise_dispute</Code> themselves. The tradeoff:
                 a clean approval takes as long to finalize as a clean rejection always did, instead of being
                 instant.
+              </Concept>
+              <Concept term="What stops someone from disputing forever?">
+                Two things, together. It&apos;s <em>bounded</em>: <Code>dispute_round</Code> is capped at{' '}
+                <Code>get_max_dispute_rounds()</Code> (3) - once reached, <Code>raise_dispute</Code> is blocked
+                outright, so the engagement can only be settled or escalated to GenLayer&apos;s protocol-level
+                appeal. It&apos;s also <em>economically costly</em>: since evidence is locked after submission, a
+                dispute can only bet that re-judging the exact same evidence lands differently - a bet that
+                reliably loses (and forfeits its bond) unless the original judgment was genuinely a misfire.
+              </Concept>
+              <Concept term="Can the counterparty submit different evidence later?">
+                No. <Code>submit_deliverable</Code> can only be called once, and <Code>raise_dispute</Code> takes
+                no evidence parameter at all - it can only contest the evidence already on file and force a
+                re-judgment of it. Whatever was submitted at the start is what gets judged, every time.
               </Concept>
               <Concept term="Are comments visible to anyone else?">
                 No. Each comment is end-to-end encrypted for the depositor and counterparty only - not even this

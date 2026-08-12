@@ -44,8 +44,8 @@ export async function createEngagement(
   deliverableSpec: string,
   deadlineUnixSeconds: number,
   genAmount: string,
-  parentId = 0,
-  allowedEvidencePrefix = '',
+  parentId: number,
+  allowedEvidencePrefix: string,
 ) {
   const client = createWriteClient(account, provider)
   return client.writeContract({
@@ -111,16 +111,38 @@ export async function raiseDispute(
   account: `0x${string}`,
   provider: EIP1193Provider,
   engagementId: number,
-  additionalEvidence: string[],
   reason: string,
+  bondValue: bigint,
 ) {
   const client = createWriteClient(account, provider)
   return client.writeContract({
     address: getContractAddress(),
     functionName: 'raise_dispute',
-    args: [engagementId, additionalEvidence, reason],
-    value: 0n,
+    args: [engagementId, reason],
+    value: bondValue,
   })
+}
+
+export async function getRequiredDisputeBond(engagementId: number): Promise<bigint> {
+  const result = await withRetry(() =>
+    getReadClient().readContract({
+      address: getContractAddress(),
+      functionName: 'get_required_dispute_bond',
+      args: [engagementId],
+    }),
+  )
+  return BigInt(result as unknown as number)
+}
+
+export async function getMaxDisputeRounds(): Promise<number> {
+  const result = await withRetry(() =>
+    getReadClient().readContract({
+      address: getContractAddress(),
+      functionName: 'get_max_dispute_rounds',
+      args: [],
+    }),
+  )
+  return result as unknown as number
 }
 
 export async function refundExpired(account: `0x${string}`, provider: EIP1193Provider, engagementId: number) {

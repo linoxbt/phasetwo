@@ -15,6 +15,8 @@ import {
   settleRejected,
   settleApproved,
   getAppealWindowSeconds,
+  getRequiredDisputeBond,
+  getMaxDisputeRounds,
   addComment,
   getPubkey,
 } from '../lib/surety'
@@ -345,7 +347,7 @@ export function EngagementDetail() {
             releasable to the counterparty. Either party can still dispute it until then.
           </p>
           {isParty && provider && (
-            <DisputeForm address={address!} provider={provider} engagementId={eng.id} onSettled={(ok) => onSettled(ok)} />
+            <DisputeForm address={address!} provider={provider} engagementId={eng.id} disputeRound={eng.dispute_round} onSettled={(ok) => onSettled(ok)} />
           )}
         </>
       )}
@@ -370,7 +372,7 @@ export function EngagementDetail() {
             deposit becomes refundable to the depositor.
           </p>
           {isParty && provider && (
-            <DisputeForm address={address!} provider={provider} engagementId={eng.id} onSettled={(ok) => onSettled(ok)} />
+            <DisputeForm address={address!} provider={provider} engagementId={eng.id} disputeRound={eng.dispute_round} onSettled={(ok) => onSettled(ok)} />
           )}
         </>
       )}
@@ -1096,19 +1098,36 @@ function DisputeForm({
   address,
   provider,
   engagementId,
+  disputeRound,
   onSettled,
 }: {
   address: `0x${string}`
   provider: EIP1193Provider
   engagementId: number
+  disputeRound: number
   onSettled: (ok: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [urls, setUrls] = useState('')
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [requiredBond, setRequiredBond] = useState<bigint | null>(null)
+  const [maxRounds, setMaxRounds] = useState<number | null>(null)
+
+  useEffect(() => {
+    getRequiredDisputeBond(engagementId).then(setRequiredBond).catch(() => {})
+    getMaxDisputeRounds().then(setMaxRounds).catch(() => {})
+  }, [engagementId])
+
+  if (maxRounds !== null && disputeRound >= maxRounds) {
+    return (
+      <p className="mt-6 text-sm text-ink-soft">
+        Maximum dispute rounds ({maxRounds}) reached for this engagement - it can only be settled now, or
+        escalated through GenLayer's protocol-level appeal.
+      </p>
+    )
+  }
 
   if (!open) {
     return (
@@ -1121,13 +1140,11 @@ function DisputeForm({
   return (
     <Card className="mt-6 border-coral-500/30 bg-coral-500/[0.04] p-5">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-coral-600">Raise a dispute</h2>
-      <Textarea
-        value={urls}
-        onChange={(e) => setUrls(e.target.value)}
-        placeholder="Additional evidence URLs, one per line (optional)"
-        rows={2}
-        className="mb-3"
-      />
+      <p className="mb-3 text-sm text-ink-soft">
+        Evidence is locked and can't be changed - this forces a re-judgment of what's already on file. It costs a
+        bond{requiredBond !== null && <> of {formatEther(requiredBond)} GEN</>}: refunded if the re-judgment
+        changes the outcome, forfeited to the other party if it doesn't.
+      </p>
       <Textarea
         value={reason}
         onChange={(e) => setReason(e.target.value)}
@@ -1142,14 +1159,14 @@ function DisputeForm({
             setError('A reason is required.')
             return
           }
-          const evidenceUrls = urls
-            .split('\n')
-            .map((u) => u.trim())
-            .filter(Boolean)
+          if (requiredBond === null) {
+            setError('Still loading the required bond amount - try again in a moment.')
+            return
+          }
           setBusy(true)
           setError(null)
           try {
-            const h = (await raiseDispute(address, provider, engagementId, evidenceUrls, reason.trim())) as `0x${string}`
+            const h = (await raiseDispute(address, provider, engagementId, reason.trim(), requiredBond)) as `0x${string}`
             setHash(h)
           } catch (err: any) {
             setError(err?.message ?? 'Transaction failed')

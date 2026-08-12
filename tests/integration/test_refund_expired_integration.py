@@ -17,7 +17,7 @@ def test_refund_expired_after_real_deadline_passes():
 
     deadline = future_deadline(seconds=5)
     tx = contract.create_engagement(
-        args=[counterparty.address, "Ship it", deadline]
+        args=[counterparty.address, "Ship it", deadline, 0, "https://example.com"]
     ).transact(value=1000)
     assert tx_execution_succeeded(tx), f"create_engagement failed: {tx}"
 
