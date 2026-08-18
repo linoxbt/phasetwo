@@ -49,7 +49,15 @@ export function explorerAddressUrl(address: string): string {
  * signal a genuine on-chain failure - that's only ever knowable from a
  * successfully-returned receipt's execution result. So any exception here
  * just means "try again", never "this failed" - we keep re-polling in short
- * chunks until either a real receipt comes back or the whole budget runs out. */
+ * chunks until either a real receipt comes back or the whole budget runs out.
+ *
+ * Waits for FINALIZED, not ACCEPTED - ACCEPTED means validator consensus
+ * landed, but a contract read (get_engagement etc.) isn't guaranteed to
+ * reflect the write until it's actually finalized. Settling for ACCEPTED
+ * here meant onSettled fired - and the page refetched - before the new
+ * state was reliably queryable, so callers like Accept/Decline showed a
+ * "Confirmed" checkmark while the page kept displaying the pre-transaction
+ * status forever (no retry after that one early refetch). */
 async function waitResilient(hash: TransactionHash, budgetMs: number) {
   const deadline = Date.now() + budgetMs
   let lastError: unknown
@@ -57,7 +65,7 @@ async function waitResilient(hash: TransactionHash, budgetMs: number) {
     try {
       return await getReadClient().waitForTransactionReceipt({
         hash,
-        status: TransactionStatus.ACCEPTED,
+        status: TransactionStatus.FINALIZED,
         retries: 5,
         interval: 3000,
       })
@@ -120,7 +128,7 @@ export function TxStatus({ hash, onSettled, budgetMs = DEFAULT_BUDGET_MS }: Prop
     try {
       const tx: any = await getReadClient().getTransaction({ hash: hash as TransactionHash })
       const statusName = tx?.statusName ?? tx?.status_name
-      const isDecided = statusName === 'ACCEPTED' || statusName === 'FINALIZED' || NO_VERDICT_STATUSES.has(statusName)
+      const isDecided = statusName === 'FINALIZED' || NO_VERDICT_STATUSES.has(statusName)
       if (isDecided) {
         const { state: outcome, message: msg } = evaluateReceipt(tx)
         setState(outcome)
