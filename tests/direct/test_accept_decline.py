@@ -1,4 +1,4 @@
-from conftest import deploy_surety, create_engagement as _create
+from conftest import deploy_surety, create_engagement as _create, DUMMY_HASH
 
 
 def test_accept_engagement_success(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -98,7 +98,7 @@ def test_submit_deliverable_blocks_before_acceptance_via_decline_path(
     contract.decline_engagement(eid, "no thanks")
 
     with direct_vm.expect_revert("Cannot submit in status 'declined'"):
-        contract.submit_deliverable(eid, ["https://example.com"], "notes")
+        contract.submit_deliverable(eid, ["https://example.com"], [DUMMY_HASH], "notes")
 
 
 def test_register_and_get_pubkey(direct_vm, direct_deploy, direct_alice, direct_bob):

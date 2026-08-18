@@ -1,4 +1,4 @@
-from conftest import deploy_surety, create_engagement as _create
+from conftest import deploy_surety, create_engagement as _create, DUMMY_HASH
 
 
 # NOTE: settle_approved's window-open/window-elapsed happy paths require an
@@ -26,7 +26,7 @@ def test_settle_approved_blocks_from_submitted(direct_vm, direct_deploy, direct_
 
     direct_vm.sender = direct_bob
     contract.accept_engagement(eid)
-    contract.submit_deliverable(eid, ["https://example.com"], "notes")
+    contract.submit_deliverable(eid, ["https://example.com"], [DUMMY_HASH], "notes")
 
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("Cannot settle in status 'submitted'"):

@@ -1,4 +1,4 @@
-from conftest import deploy_surety, create_engagement as _create
+from conftest import deploy_surety, create_engagement as _create, DUMMY_HASH
 
 
 def test_raise_dispute_only_parties(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
@@ -32,7 +32,7 @@ def test_raise_dispute_requires_terminal_status_after_submission(
 
     direct_vm.sender = direct_bob
     contract.accept_engagement(eid)
-    contract.submit_deliverable(eid, ["https://example.com"], "notes")
+    contract.submit_deliverable(eid, ["https://example.com"], [DUMMY_HASH], "notes")
 
     # The empty-reason guard sits behind the status check, so it can only be
     # exercised once status is rejected/approved — reachable only via

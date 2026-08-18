@@ -1,7 +1,14 @@
 from gltest import get_accounts
 from gltest.assertions import tx_execution_succeeded
 
-from conftest import deploy_surety, as_account, future_deadline, JUDGE_WAIT_RETRIES, JUDGE_WAIT_INTERVAL
+from conftest import (
+    deploy_surety,
+    as_account,
+    future_deadline,
+    JUDGE_WAIT_RETRIES,
+    JUDGE_WAIT_INTERVAL,
+    EVIDENCE_HASH,
+)
 
 EVIDENCE_URL = "https://example.com"
 SPEC_MISMATCHED = (
@@ -30,7 +37,7 @@ def test_raise_dispute_retriggers_judgment_on_locked_evidence():
     assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
 
     tx = counterparty_contract.submit_deliverable(
-        args=[eid, [EVIDENCE_URL], "Here's the checkout page."]
+        args=[eid, [EVIDENCE_URL], [EVIDENCE_HASH], "Here's the checkout page."]
     ).transact()
     assert tx_execution_succeeded(tx), f"submit_deliverable failed: {tx}"
 

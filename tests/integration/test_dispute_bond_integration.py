@@ -1,7 +1,14 @@
 from gltest import get_accounts
 from gltest.assertions import tx_execution_succeeded, tx_execution_failed
 
-from conftest import deploy_surety, as_account, future_deadline, JUDGE_WAIT_RETRIES, JUDGE_WAIT_INTERVAL
+from conftest import (
+    deploy_surety,
+    as_account,
+    future_deadline,
+    JUDGE_WAIT_RETRIES,
+    JUDGE_WAIT_INTERVAL,
+    EVIDENCE_HASH,
+)
 
 # Same stable, obviously-mismatched pair used by test_release_rejection.py --
 # reliably reaches 'rejected' with a small local model, and re-judging the
@@ -28,7 +35,9 @@ def _reject_engagement(contract, counterparty_contract, counterparty_address):
     tx = counterparty_contract.accept_engagement(args=[eid]).transact()
     assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
 
-    tx = counterparty_contract.submit_deliverable(args=[eid, [EVIDENCE_URL], "Here's the checkout page."]).transact()
+    tx = counterparty_contract.submit_deliverable(
+        args=[eid, [EVIDENCE_URL], [EVIDENCE_HASH], "Here's the checkout page."]
+    ).transact()
     assert tx_execution_succeeded(tx), f"submit_deliverable failed: {tx}"
 
     tx = contract.request_release(args=[eid]).transact(wait_retries=JUDGE_WAIT_RETRIES, wait_interval=JUDGE_WAIT_INTERVAL)

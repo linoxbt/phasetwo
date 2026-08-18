@@ -1,7 +1,14 @@
 from gltest import get_accounts
 from gltest.assertions import tx_execution_succeeded
 
-from conftest import deploy_surety, as_account, future_deadline, JUDGE_WAIT_RETRIES, JUDGE_WAIT_INTERVAL
+from conftest import (
+    deploy_surety,
+    as_account,
+    future_deadline,
+    JUDGE_WAIT_RETRIES,
+    JUDGE_WAIT_INTERVAL,
+    EVIDENCE_HASH,
+)
 
 # example.com is IANA's stable reserved-example page; its content essentially
 # never changes, so this is as close to a guaranteed-correct judgment as a
@@ -32,7 +39,7 @@ def test_request_release_approves_matching_evidence():
     assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
 
     tx = counterparty_contract.submit_deliverable(
-        args=[eid, [EVIDENCE_URL], "See the live page, it's the standard IANA example page."]
+        args=[eid, [EVIDENCE_URL], [EVIDENCE_HASH], "See the live page, it's the standard IANA example page."]
     ).transact()
     assert tx_execution_succeeded(tx), f"submit_deliverable failed: {tx}"
 

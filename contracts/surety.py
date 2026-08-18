@@ -35,6 +35,15 @@ APPEAL_WINDOW_SECONDS = 3 * 24 * 60 * 60
 MAX_DISPUTE_ROUNDS = 3
 DISPUTE_BOND_BPS = 500  # 5% of the deposit
 
+# Content-addressed schemes: the reference itself is a hash of the content
+# (an IPFS/Arweave id changes if the bytes it points at change), so evidence
+# using one of these is already immutable by construction - no separate
+# content hash is required or checked for it. Anything else (http/https) is
+# mutable, so submit_deliverable requires an accompanying sha256 hash, and
+# request_release re-verifies it against freshly-fetched content on every
+# judgment - see _require_evidence_bound and request_release's judge().
+IMMUTABLE_SCHEMES = {"ipfs", "ar"}
+
 
 class Status:
     CREATED = "created"
@@ -96,6 +105,12 @@ class Engagement:
     dispute_bond: u256
     disputer: Address
     pre_dispute_status: str
+    # One entry per evidence_urls entry, same length, set once in
+    # submit_deliverable and never changed after. Empty string for a URL
+    # whose scheme is content-addressed (see IMMUTABLE_SCHEMES); otherwise a
+    # sha256 hex digest of the evidence content, re-verified against a fresh
+    # fetch on every judgment - see request_release's judge().
+    evidence_hashes: DynArray[str]
 
 
 class Surety(gl.Contract):
@@ -146,10 +161,24 @@ class Surety(gl.Contract):
     def _require_evidence_bound(self, eng: Engagement, urls: DynArray[str]) -> None:
         # allowed_evidence_prefix is mandatory at creation (see create_engagement),
         # so it's always non-empty here - no "unrestricted" case to special-case.
+        # Parsed scheme/host/path comparison, not a raw string prefix - a raw
+        # `.startswith()` check is bypassable (e.g. prefix "https://github.com"
+        # would wrongly match "https://github.com.attacker.io/x", since that
+        # string genuinely starts with those characters even though the real
+        # host is a different domain entirely).
+        bound_scheme, bound_host, bound_path = _parse_url(eng.allowed_evidence_prefix)
         for url in urls:
-            if not url.startswith(eng.allowed_evidence_prefix):
+            scheme, host, path = _parse_url(url)
+            if scheme != bound_scheme or host != bound_host:
                 raise gl.vm.UserError(
-                    f"{ERROR_EXPECTED} Evidence URL '{url}' does not match the prefix "
+                    f"{ERROR_EXPECTED} Evidence URL '{url}' does not match the scheme/host "
+                    f"committed to at creation ('{eng.allowed_evidence_prefix}')"
+                )
+            boundary = bound_path if bound_path.endswith("/") else bound_path + "/"
+            path_ok = bound_path in ("", "/") or path == bound_path or path.startswith(boundary)
+            if not path_ok:
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} Evidence URL '{url}' does not match the path "
                     f"committed to at creation ('{eng.allowed_evidence_prefix}')"
                 )
 
@@ -205,6 +234,7 @@ class Surety(gl.Contract):
                 f"{ERROR_EXPECTED} allowed_evidence_prefix is required - commit to an evidence "
                 f"source (a repo, an ipfs:// reference, a domain) at creation time"
             )
+        _parse_url(allowed_evidence_prefix)  # fail fast on a malformed prefix, not later at submission
 
         engagement_id = self.next_id
         self.next_id = u256(self.next_id + 1)
@@ -231,6 +261,7 @@ class Surety(gl.Contract):
             dispute_bond=u256(0),
             disputer=Address("0x0000000000000000000000000000000000000000"),
             pre_dispute_status="",
+            evidence_hashes=[],
         )
         self.engagements[engagement_id] = eng
         self.all_ids.append(engagement_id)
@@ -272,7 +303,9 @@ class Surety(gl.Contract):
     # ------------------------------------------------------------------
 
     @gl.public.write
-    def submit_deliverable(self, engagement_id: int, evidence_urls: DynArray[str], notes: str) -> None:
+    def submit_deliverable(
+        self, engagement_id: int, evidence_urls: DynArray[str], evidence_hashes: DynArray[str], notes: str
+    ) -> None:
         eng = self._get(u256(engagement_id))
         if gl.message.sender_address != eng.counterparty:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Only the counterparty may submit a deliverable")
@@ -298,11 +331,31 @@ class Surety(gl.Contract):
             )
         if len(evidence_urls) > MAX_EVIDENCE_URLS:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Too many evidence URLs (max {MAX_EVIDENCE_URLS})")
+        if len(evidence_hashes) != len(evidence_urls):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} evidence_hashes must have exactly one entry per evidence URL "
+                f"(empty string for content-addressed URLs)"
+            )
         self._require_evidence_bound(eng, evidence_urls)
 
+        for url, digest in zip(evidence_urls, evidence_hashes):
+            scheme, _host, _path = _parse_url(url)
+            digest = digest.strip()
+            if scheme in IMMUTABLE_SCHEMES:
+                continue  # the reference itself is a content hash - nothing more to bind
+            if not digest:
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} A content hash is required for '{url}' - only "
+                    f"{'/'.join(s + '://' for s in sorted(IMMUTABLE_SCHEMES))} evidence can skip it"
+                )
+            if len(digest) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digest):
+                raise gl.vm.UserError(f"{ERROR_EXPECTED} '{digest}' is not a valid sha256 hash (64 hex characters)")
+
         eng.evidence_urls.clear()
-        for url in evidence_urls:
+        eng.evidence_hashes.clear()
+        for url, digest in zip(evidence_urls, evidence_hashes):
             eng.evidence_urls.append(url)
+            eng.evidence_hashes.append(digest.strip().lower())
 
         eng.notes = notes
         eng.status = Status.SUBMITTED
@@ -323,21 +376,46 @@ class Surety(gl.Contract):
         deliverable_spec = eng.deliverable_spec
         notes = eng.notes
         evidence_urls = [u for u in eng.evidence_urls]
+        evidence_hashes = [h for h in eng.evidence_hashes]
 
         def judge() -> dict:
+            import hashlib
+
             evidence_text = ""
             remaining = MAX_TOTAL_EVIDENCE_CHARS
-            for url in evidence_urls:
+            tampered: list[str] = []
+            for url, expected_hash in zip(evidence_urls, evidence_hashes):
                 if remaining <= 0:
                     break
                 try:
                     fetched = gl.nondet.web.render(url, mode="text")
                 except Exception as e:
                     fetched = f"[failed to fetch: {e}]"
-                chunk = str(fetched)[:MAX_CHARS_PER_URL]
+                fetched_str = str(fetched)
+                # Committed evidence must be exactly what's judged, on this
+                # verdict and every re-judgment after a dispute - a mutable
+                # URL that now serves different content than what was hashed
+                # at submission time fails deterministically, before the LLM
+                # ever sees it (empty expected_hash = content-addressed URL,
+                # already immutable by construction - nothing to check).
+                if expected_hash:
+                    actual_hash = hashlib.sha256(fetched_str.encode("utf-8")).hexdigest()
+                    if actual_hash != expected_hash:
+                        tampered.append(url)
+                chunk = fetched_str[:MAX_CHARS_PER_URL]
                 chunk = chunk[:remaining]
                 remaining -= len(chunk)
                 evidence_text += f"--- SOURCE: {url} ---\n{chunk}\n\n"
+
+            if tampered:
+                return {
+                    "met": False,
+                    "reasoning": (
+                        "Evidence content no longer matches the hash committed to at submission for: "
+                        + ", ".join(tampered)
+                        + ". Judgment cannot proceed on evidence that has changed since it was submitted."
+                    ),
+                }
 
             prompt = f"""You are adjudicating whether a submitted deliverable satisfies its agreed spec.
 Base your judgment ONLY on whether the evidence below actually satisfies the spec.
@@ -591,6 +669,7 @@ Respond with strict JSON only, no other text:
             "dispute_bond": int(eng.dispute_bond),
             "disputer": eng.disputer,
             "pre_dispute_status": eng.pre_dispute_status,
+            "evidence_hashes": [h for h in eng.evidence_hashes],
         }
 
     @gl.public.view
@@ -619,6 +698,27 @@ Respond with strict JSON only, no other text:
     def get_required_dispute_bond(self, engagement_id: int) -> int:
         eng = self._get(u256(engagement_id))
         return int(self._required_dispute_bond(eng))
+
+
+def _parse_url(url: str) -> tuple[str, str, str]:
+    """Minimal scheme://host/path splitter - hand-rolled rather than relying
+    on urllib.parse, to keep behavior small and auditable rather than
+    depending on an unverified stdlib module inside the GenVM sandbox.
+    Returns (scheme, host, path), all lowercased except path. path is ""
+    when the URL has no path segment (e.g. "https://example.com")."""
+    if "://" not in url:
+        raise gl.vm.UserError(f"{ERROR_EXPECTED} '{url}' is missing a scheme (e.g. https://)")
+    scheme, rest = url.split("://", 1)
+    if not scheme or not rest:
+        raise gl.vm.UserError(f"{ERROR_EXPECTED} '{url}' is not a well-formed URL")
+    slash = rest.find("/")
+    if slash == -1:
+        host, path = rest, ""
+    else:
+        host, path = rest[:slash], rest[slash:]
+    if not host:
+        raise gl.vm.UserError(f"{ERROR_EXPECTED} '{url}' is missing a host")
+    return scheme.lower(), host.lower(), path
 
 
 def _parse_verdict(raw) -> dict:

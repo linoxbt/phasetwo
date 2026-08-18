@@ -10,7 +10,7 @@ Live on both **GenLayer Asimov Testnet** and **GenLayer Studio Network**, switch
 
 1. **Create the engagement** — the depositor locks a GEN payment, names the counterparty, sets a deadline, writes the deliverable spec in plain English, and commits to an evidence source (a repo, an `ipfs://` reference, a domain) that every future evidence URL must match. This commitment is required, not optional — see [Why evidence is locked at creation](#why-evidence-is-locked-at-creation).
 2. **Accept, or decline** — the counterparty must explicitly accept before doing any work; `submit_deliverable` isn't callable until they do. Declining requires a reason and refunds the deposit to the depositor immediately.
-3. **Submit the evidence, once** — once accepted, the counterparty submits one or more URLs matching the bound prefix as checkable proof of work. This is a one-time, permanent commitment — evidence can never be added to or changed after this call, not even during a dispute.
+3. **Submit the evidence, once** — once accepted, the counterparty submits one or more URLs matching the bound prefix (validated structurally by scheme, host, and path — not a raw string prefix) as checkable proof of work, each paired with a SHA-256 hash of its content unless the URL is already content-addressed (`ipfs://`, `ar://`). This is a one-time, permanent commitment — evidence can never be added to or changed after this call, not even during a dispute. See [Why evidence is locked at creation](#why-evidence-is-locked-at-creation).
 4. **Validators judge live** — anyone can trigger `request_release`. A random set of GenLayer validators — each often running a different underlying model — independently fetch the evidence themselves and compare it against the spec.
 5. **Approved, or rejected — either way, not final yet** — a "met" verdict does *not* pay out on the spot. It opens the same kind of 3-day appeal window a rejection does: either party can still dispute it (for a forfeitable bond, up to 3 times), and only then does judgment run again with real effect. This is deliberate — see [Why releases aren't instant](#why-releases-arent-instant) and [Why disputes are capped and cost a bond](#why-disputes-are-capped-and-cost-a-bond).
 6. **Settle** — once the appeal window closes on either an approval or a rejection with no dispute raised, anyone can permissionlessly finalize it: the deposit moves to the counterparty (approval) or back to the depositor (rejection). Nothing can sit stuck forever, and nothing moves before its window closes uncontested.
@@ -38,7 +38,7 @@ A single Intelligent Contract (class `Surety`) owns the full escrow lifecycle:
 | `create_engagement(counterparty, deliverable_spec, deadline, parent_id=0, allowed_evidence_prefix)` | write · payable | Locks the sent value as the deposit, opens a new engagement. `deliverable_spec` is capped at 8,000 characters. A non-zero `parent_id` links it as one installment of the milestone plan rooted at that engagement id (same depositor/counterparty, and that engagement must itself be a root) - every other method treats a milestone exactly like any other engagement. `allowed_evidence_prefix` is **required** - a repo URL, an `ipfs://` reference, a specific domain - and binds every evidence URL `submit_deliverable` will ever accept, committed to before any work begins |
 | `accept_engagement(engagement_id)` | write · counterparty only | Accepts the engagement, unlocking `submit_deliverable`. Moves no funds |
 | `decline_engagement(engagement_id, reason)` | write · counterparty only | Declines with a required reason (capped at 2,000 characters) and refunds the deposit to the depositor immediately |
-| `submit_deliverable(engagement_id, evidence_urls, notes)` | write · counterparty only, one-time | Attaches evidence, moves the engagement to `submitted`. Requires `accepted` status first; blocked once the deadline has passed, after the first submission, or if a URL doesn't match the bound `allowed_evidence_prefix`. This is the only place evidence is ever set - it's locked from here on, including through every future dispute |
+| `submit_deliverable(engagement_id, evidence_urls, evidence_hashes, notes)` | write · counterparty only, one-time | Attaches evidence, moves the engagement to `submitted`. Requires `accepted` status first; blocked once the deadline has passed, after the first submission, if a URL's parsed scheme/host/path doesn't match the bound `allowed_evidence_prefix`, or if a mutable URL (anything except `ipfs://`/`ar://`) is missing its paired sha256 hash. This is the only place evidence is ever set - it's locked from here on, including through every future dispute |
 | `request_release(engagement_id)` | write | Triggers validator judgment — fetches the locked evidence live, moves to `approved` or `rejected` based on consensus. Neither outcome pays out yet - see `settle_approved`/`settle_rejected`. If this resolves a prior dispute, it also settles that dispute's bond - see `raise_dispute` |
 | `raise_dispute(engagement_id, reason)` | write · either party, payable | Contests the current `approved`/`rejected` verdict and forces a re-judgment of the same (locked) evidence - increments `dispute_round`, blocked once `dispute_round` reaches `get_max_dispute_rounds()` or that status's appeal window has closed. Requires a bond of at least `get_required_dispute_bond(engagement_id)` (5% of the deposit, capped there even if more is sent - any excess is refunded immediately, never put at risk); the next `request_release` refunds the bond if the verdict changes, forfeits it to the other party if it doesn't |
 | `refund_expired(engagement_id)` | write | Refunds the deposit if the deadline passed with nothing ever submitted, whether the engagement was still `created` or already `accepted` |
@@ -47,7 +47,7 @@ A single Intelligent Contract (class `Surety`) owns the full escrow lifecycle:
 | `add_comment(engagement_id, text)` | write · either party | Posts a message to the engagement's comment thread. The app end-to-end encrypts `text` client-side before calling this, so only the depositor and counterparty can read it — see [Comment privacy](#comment-privacy) |
 | `register_pubkey(pubkey)` | write · global, once per address | Publishes the caller's comment-encryption public key, reusable across every engagement that address is ever a party to |
 | `get_pubkey(address)` | view | An address's registered comment-encryption public key, or `""` if it hasn't registered one |
-| `get_engagement(engagement_id)` | view | Full engagement record, including its comment thread, bound evidence prefix, approval/rejection timestamps, and the current dispute's bond/disputer/pre-dispute-status while one is open |
+| `get_engagement(engagement_id)` | view | Full engagement record, including its comment thread, bound evidence prefix, submitted evidence hashes, approval/rejection timestamps, and the current dispute's bond/disputer/pre-dispute-status while one is open |
 | `list_engagements_for(address)` | view | Engagement ids where the address is depositor or counterparty |
 | `get_appeal_window_seconds()` | view | The configured appeal window, in seconds (3 days by default) |
 | `get_max_dispute_rounds()` | view | The hard cap on `dispute_round` per engagement (3) |
@@ -66,9 +66,13 @@ The tradeoff is honest: a clean approval now takes as long to finalize as a clea
 
 ### Why evidence is locked at creation
 
-Binding evidence to a prefix only helps if the prefix is actually set, and if a dispute can't quietly introduce evidence that was never agreed to. Two earlier gaps, closed together:
+Binding evidence to a prefix only helps if the prefix is actually set, if the match can't be gamed, and if a dispute can't quietly introduce evidence that was never agreed to, or judge different bytes than what was actually submitted. Three gaps, closed together:
 
 `allowed_evidence_prefix` is now **required** at `create_engagement` - there's no more unrestricted default to fall back on (or forget to set). And `submit_deliverable` is a one-shot call: whatever evidence URLs go in there are the only evidence this engagement will ever have. `raise_dispute` no longer takes an evidence parameter at all - a dispute can contest the existing evidence and force a re-judgment of it, but it can never add, swap, or extend what's on file. The commitment made at creation is the commitment that gets judged, every time.
+
+The match itself is now structural, not a raw string prefix. A naive `url.startswith(prefix)` check is bypassable: a prefix of `https://github.com/example` would incorrectly match `https://github.com/example-evil/x` (no path boundary), and a prefix of `https://github.com` would incorrectly match `https://github.com.attacker.io/x` (the string does literally start with those characters, even though the host is a different domain entirely). `submit_deliverable` parses both the bound prefix and every submitted URL into scheme, host, and path, and requires an exact scheme/host match plus a real path-segment boundary - neither bypass above passes.
+
+Locking the URL only pins *where* the evidence lives, not *what's there* - `gl.nondet.web.render` re-fetches every URL fresh on each `request_release` call, including a post-dispute re-judgment, so a mutable page could in principle show different content than whatever was reviewed the first time. Content-addressed evidence (`ipfs://`, `ar://`) is already immune to this - the reference *is* a hash of the content, so fetching it again is guaranteed to return the same bytes. Anything else requires a SHA-256 hash submitted alongside the URL in `submit_deliverable`; every `request_release` call re-hashes whatever it actually fetched and compares it against that committed hash *before* any LLM ever sees the content - a mismatch is a deterministic rejection naming the tampered URL, not a judgment call. The same committed bytes are what get judged, on every appeal.
 
 ### Why disputes are capped and cost a bond
 
@@ -106,8 +110,8 @@ App pages share a collapsible sidebar shell; a network switcher in the sidebar l
 
 | Network | Chain id | Contract address | Notes |
 |---|---|---|---|
-| **Asimov Testnet** | `4221` | `0xf8D5EfC77038BC1E4Cdb0Da2129327Aecb26C79d` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
-| **Studio Network** | `61999` | `0x3B7ab6Bdd927230E9E5572dFa03E4de20D1dcb30` | Hosted GenLayer Studio. Gasless — no funded account needed |
+| **Asimov Testnet** | `4221` | `0x0df473331D5A8AaAaE596B92B962769431eCA121` | GenLayer's public testnet. Needs testnet GEN — [faucet](https://testnet-faucet.genlayer.foundation/) (100 GEN/claim, weekly) |
+| **Studio Network** | `61999` | `0xd28BcbC18cFebfD26B3A7A9C49a027EaBb2B5Ab9` | Hosted GenLayer Studio. Gasless — no funded account needed |
 
 ## Getting started
 
@@ -129,8 +133,8 @@ npm run dev
 `.env.local`:
 
 ```bash
-VITE_CONTRACT_ADDRESS_ASIMOV=0xf8D5EfC77038BC1E4Cdb0Da2129327Aecb26C79d
-VITE_CONTRACT_ADDRESS_STUDIONET=0x3B7ab6Bdd927230E9E5572dFa03E4de20D1dcb30
+VITE_CONTRACT_ADDRESS_ASIMOV=0x0df473331D5A8AaAaE596B92B962769431eCA121
+VITE_CONTRACT_ADDRESS_STUDIONET=0xd28BcbC18cFebfD26B3A7A9C49a027EaBb2B5Ab9
 VITE_REOWN_PROJECT_ID=<your project id from https://dashboard.reown.com>
 ```
 
@@ -142,7 +146,7 @@ source .venv/bin/activate
 pip install genlayer-test genvm-linter
 
 genvm-lint check contracts/surety.py    # lint + SDK validation
-pytest tests/direct/ -v                 # 58 fast, in-memory tests
+pytest tests/direct/ -v                 # 64 fast, in-memory tests
 ```
 
 Integration tests (`tests/integration/`) run against a live network and exercise the full validator-judgment path with real evidence URLs — see `genlayer-dev:integration-tests` if you have the GenLayer Claude Code skill installed, or run with `gltest tests/integration/ -v -s --network <network>` directly.

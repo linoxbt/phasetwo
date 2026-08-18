@@ -3,7 +3,14 @@ import time
 from gltest import get_accounts
 from gltest.assertions import tx_execution_succeeded
 
-from conftest import deploy_surety, as_account, future_deadline, JUDGE_WAIT_RETRIES, JUDGE_WAIT_INTERVAL
+from conftest import (
+    deploy_surety,
+    as_account,
+    future_deadline,
+    JUDGE_WAIT_RETRIES,
+    JUDGE_WAIT_INTERVAL,
+    EVIDENCE_HASH,
+)
 
 # Same stable, obviously-matching pair used by test_release_approval.py --
 # reliably reaches 'approved' with a small local model.
@@ -14,6 +21,7 @@ SPEC_MATCHING = (
 )
 
 APPEAL_WINDOW_SECONDS = 5  # deployed short so the test can wait it out for real
+REQUIRED_BOND = 50  # 5% of the 1000 deposit, per DISPUTE_BOND_BPS
 
 
 def _approve_engagement(contract, counterparty_contract, counterparty_address):
@@ -28,7 +36,7 @@ def _approve_engagement(contract, counterparty_contract, counterparty_address):
     assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
 
     tx = counterparty_contract.submit_deliverable(
-        args=[eid, [EVIDENCE_URL], "See the live page, it's the standard IANA example page."]
+        args=[eid, [EVIDENCE_URL], [EVIDENCE_HASH], "See the live page, it's the standard IANA example page."]
     ).transact()
     assert tx_execution_succeeded(tx), f"submit_deliverable failed: {tx}"
 
@@ -92,7 +100,7 @@ def test_raise_dispute_blocked_once_approval_window_elapses():
 
     time.sleep(APPEAL_WINDOW_SECONDS + 3)
 
-    tx = contract.raise_dispute(args=[eid, [], "please reconsider"]).transact()
+    tx = contract.raise_dispute(args=[eid, "please reconsider"]).transact(value=REQUIRED_BOND)
     assert not tx_execution_succeeded(tx), "raise_dispute should be blocked once the appeal window has closed"
 
     eng = contract.get_engagement(args=[eid]).call()
@@ -115,7 +123,9 @@ def test_dispute_during_appeal_window_keeps_funds_locked():
     # Either party may dispute an approved-but-not-yet-settled engagement --
     # here the depositor does, since they're the one who'd want to contest
     # a "met" verdict they disagree with.
-    tx = contract.raise_dispute(args=[eid, [], "I don't think this actually satisfies the spec."]).transact()
+    tx = contract.raise_dispute(
+        args=[eid, "I don't think this actually satisfies the spec."]
+    ).transact(value=REQUIRED_BOND)
     assert tx_execution_succeeded(tx), f"raise_dispute failed: {tx}"
 
     eng = contract.get_engagement(args=[eid]).call()

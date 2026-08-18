@@ -34,7 +34,7 @@ import { TxStatus, explorerUrl, explorerAddressUrl } from '../components/TxStatu
 import { getContractAddress } from '../lib/genlayer-client'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
-import { Textarea } from '../components/ui/Input'
+import { Input, Textarea } from '../components/ui/Input'
 import { Modal } from '../components/ui/Modal'
 import { Skeleton } from '../components/ui/Skeleton'
 import { IconScale } from '../components/icons'
@@ -264,14 +264,22 @@ export function EngagementDetail() {
       {eng.evidence_urls.length > 0 && (
         <div className="mt-8">
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-ink-soft">Evidence</h2>
-          <ul className="space-y-1">
-            {eng.evidence_urls.map((url) => (
-              <li key={url}>
-                <a href={url} target="_blank" rel="noreferrer" className="break-all text-sm text-coral-600 underline hover:text-coral-700">
-                  {url}
-                </a>
-              </li>
-            ))}
+          <ul className="space-y-1.5">
+            {eng.evidence_urls.map((url, i) => {
+              const evidenceHash = eng.evidence_hashes?.[i]
+              return (
+                <li key={url}>
+                  <a href={url} target="_blank" rel="noreferrer" className="break-all text-sm text-coral-600 underline hover:text-coral-700">
+                    {url}
+                  </a>
+                  {evidenceHash ? (
+                    <p className="break-all text-xs text-ink-soft">sha256: {evidenceHash}</p>
+                  ) : (
+                    <p className="text-xs text-ink-soft">Content-addressed - no hash needed.</p>
+                  )}
+                </li>
+              )
+            })}
           </ul>
           {eng.notes && <p className="mt-2 whitespace-pre-wrap text-sm text-ink-soft">{eng.notes}</p>}
         </div>
@@ -1006,6 +1014,20 @@ function AcceptDeclineActions({
 // submission client-side instead of only after a real transaction/gas spend.
 const MAX_EVIDENCE_URLS = 10
 
+// Mirrors contracts/surety.py's IMMUTABLE_SCHEMES - these references are
+// already a hash of their own content, so no separate hash field is needed.
+const IMMUTABLE_SCHEMES = ['ipfs://', 'ar://']
+const HASH_RE = /^[0-9a-fA-F]{64}$/
+
+function isImmutableUrl(url: string): boolean {
+  return IMMUTABLE_SCHEMES.some((scheme) => url.trim().toLowerCase().startsWith(scheme))
+}
+
+interface EvidenceRow {
+  url: string
+  hash: string
+}
+
 function SubmitDeliverableForm({
   address,
   provider,
@@ -1023,23 +1045,68 @@ function SubmitDeliverableForm({
   onSubmitting: (hash: `0x${string}` | null) => void
   onSettled: (ok: boolean) => void
 }) {
-  const [urls, setUrls] = useState('')
+  const [rows, setRows] = useState<EvidenceRow[]>([{ url: '', hash: '' }])
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
   const [commentHash, setCommentHash] = useState<`0x${string}` | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const updateRow = (i: number, patch: Partial<EvidenceRow>) => {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  }
+
   return (
     <Card className="mt-6 p-5">
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-soft">Submit Deliverable</h2>
-      <Textarea
-        value={urls}
-        onChange={(e) => setUrls(e.target.value)}
-        placeholder="Evidence URLs, one per line (repo, live deployment, document...)"
-        rows={3}
-        className="mb-3"
-      />
+      <p className="mb-3 text-xs text-ink-soft">
+        Each URL needs a sha256 hash of its content, re-checked at judgment time so it can't be swapped out later.
+        Content-addressed references (ipfs://, ar://) are already immutable and don't need one.
+      </p>
+      <div className="mb-3 space-y-2">
+        {rows.map((row, i) => {
+          const immutable = isImmutableUrl(row.url)
+          return (
+            <div key={i} className="flex flex-col gap-1.5 rounded-lg border border-line p-2.5 sm:flex-row sm:items-start">
+              <div className="flex-1 space-y-1.5">
+                <Input
+                  value={row.url}
+                  onChange={(e) => updateRow(i, { url: e.target.value })}
+                  placeholder="Evidence URL (repo, live deployment, ipfs://...)"
+                  mono
+                />
+                {!immutable && (
+                  <Input
+                    value={row.hash}
+                    onChange={(e) => updateRow(i, { hash: e.target.value })}
+                    placeholder="sha256 hash of the content (64 hex characters)"
+                    mono
+                  />
+                )}
+                {immutable && <p className="text-xs text-ink-soft">Content-addressed - no hash needed.</p>}
+              </div>
+              {rows.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setRows((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="self-start text-xs text-ink-soft hover:text-red-600 sm:mt-2"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {rows.length < MAX_EVIDENCE_URLS && (
+        <button
+          type="button"
+          onClick={() => setRows((prev) => [...prev, { url: '', hash: '' }])}
+          className="mb-4 text-xs font-medium text-accent hover:underline"
+        >
+          + Add another URL
+        </button>
+      )}
       <Textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
@@ -1050,22 +1117,39 @@ function SubmitDeliverableForm({
       <Button
         loading={busy}
         onClick={async () => {
-          const evidenceUrls = urls
-            .split('\n')
-            .map((u) => u.trim())
-            .filter(Boolean)
-          if (evidenceUrls.length === 0) {
+          const cleaned = rows.map((r) => ({ url: r.url.trim(), hash: r.hash.trim() })).filter((r) => r.url)
+          if (cleaned.length === 0) {
             setError('Add at least one evidence URL.')
             return
           }
-          if (evidenceUrls.length > MAX_EVIDENCE_URLS) {
+          if (cleaned.length > MAX_EVIDENCE_URLS) {
             setError(`Too many evidence URLs (max ${MAX_EVIDENCE_URLS}).`)
             return
           }
+          for (const r of cleaned) {
+            if (isImmutableUrl(r.url)) continue
+            if (!r.hash) {
+              setError(`A content hash is required for '${r.url}' (only ipfs:///ar:// evidence can skip it).`)
+              return
+            }
+            if (!HASH_RE.test(r.hash)) {
+              setError(`'${r.hash}' is not a valid sha256 hash (64 hex characters).`)
+              return
+            }
+          }
+          const evidenceUrls = cleaned.map((r) => r.url)
+          const evidenceHashes = cleaned.map((r) => (isImmutableUrl(r.url) ? '' : r.hash.toLowerCase()))
           setBusy(true)
           setError(null)
           try {
-            const h = (await submitDeliverable(address, provider, engagementId, evidenceUrls, notes)) as `0x${string}`
+            const h = (await submitDeliverable(
+              address,
+              provider,
+              engagementId,
+              evidenceUrls,
+              evidenceHashes,
+              notes,
+            )) as `0x${string}`
             setHash(h)
             onSubmitting(h)
           } catch (err: any) {

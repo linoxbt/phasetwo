@@ -43,6 +43,10 @@ export interface Engagement {
   dispute_bond: bigint
   disputer: `0x${string}`
   pre_dispute_status: string
+  // One entry per evidence_urls entry, same length. Empty string for a URL
+  // whose scheme is content-addressed (ipfs://, ar://); otherwise a sha256
+  // hex digest, re-verified against a fresh fetch on every judgment.
+  evidence_hashes: string[]
 }
 
 export const STATUS_LABEL: Record<StatusValue, string> = {

@@ -3,7 +3,14 @@ import time
 from gltest import get_accounts
 from gltest.assertions import tx_execution_succeeded
 
-from conftest import deploy_surety, as_account, future_deadline, JUDGE_WAIT_RETRIES, JUDGE_WAIT_INTERVAL
+from conftest import (
+    deploy_surety,
+    as_account,
+    future_deadline,
+    JUDGE_WAIT_RETRIES,
+    JUDGE_WAIT_INTERVAL,
+    EVIDENCE_HASH,
+)
 
 # Same stable, obviously-mismatched pair used by test_release_rejection.py --
 # reliably reachs 'rejected' with a small local model.
@@ -14,6 +21,7 @@ SPEC_MISMATCHED = (
 )
 
 APPEAL_WINDOW_SECONDS = 5  # deployed short so the test can wait it out for real
+REQUIRED_BOND = 50  # 5% of the 1000 deposit, per DISPUTE_BOND_BPS
 
 
 def _reject_engagement(contract, counterparty_contract, counterparty_address):
@@ -27,7 +35,9 @@ def _reject_engagement(contract, counterparty_contract, counterparty_address):
     tx = counterparty_contract.accept_engagement(args=[eid]).transact()
     assert tx_execution_succeeded(tx), f"accept_engagement failed: {tx}"
 
-    tx = counterparty_contract.submit_deliverable(args=[eid, [EVIDENCE_URL], "Here's the checkout page."]).transact()
+    tx = counterparty_contract.submit_deliverable(
+        args=[eid, [EVIDENCE_URL], [EVIDENCE_HASH], "Here's the checkout page."]
+    ).transact()
     assert tx_execution_succeeded(tx), f"submit_deliverable failed: {tx}"
 
     tx = contract.request_release(args=[eid]).transact(wait_retries=JUDGE_WAIT_RETRIES, wait_interval=JUDGE_WAIT_INTERVAL)
@@ -89,7 +99,7 @@ def test_raise_dispute_blocked_once_window_elapses():
 
     time.sleep(APPEAL_WINDOW_SECONDS + 3)
 
-    tx = counterparty_contract.raise_dispute(args=[eid, [], "please reconsider"]).transact()
+    tx = counterparty_contract.raise_dispute(args=[eid, "please reconsider"]).transact(value=REQUIRED_BOND)
     assert not tx_execution_succeeded(tx), "raise_dispute should be blocked once the appeal window has closed"
 
     eng = contract.get_engagement(args=[eid]).call()

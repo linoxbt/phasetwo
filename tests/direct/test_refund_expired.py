@@ -1,4 +1,4 @@
-from conftest import deploy_surety, future_deadline
+from conftest import deploy_surety, future_deadline, DUMMY_HASH
 
 
 def _create(contract, direct_vm, depositor, counterparty, deadline_days=1):
@@ -56,7 +56,7 @@ def test_refund_expired_blocks_after_submission(direct_vm, direct_deploy, direct
 
     direct_vm.sender = direct_bob
     contract.accept_engagement(eid)
-    contract.submit_deliverable(eid, ["https://example.com"], "notes")
+    contract.submit_deliverable(eid, ["https://example.com"], [DUMMY_HASH], "notes")
 
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("Can only refund an expired engagement with no submission"):

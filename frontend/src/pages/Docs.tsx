@@ -130,9 +130,11 @@ export function Docs() {
                 depositor immediately; no work, no judgment, no waiting.
               </Step>
               <Step n={3} title="Submit the evidence, once">
-                Once accepted, the counterparty submits one or more evidence URLs matching the bound source, plus
-                optional notes. This is permanent - evidence can never be added to or changed after this, not
-                even during a dispute.
+                Once accepted, the counterparty submits one or more evidence URLs matching the bound source - checked
+                structurally by scheme, host, and path, not a raw string prefix - plus optional notes. Each URL is
+                paired with a sha256 hash of its content, unless it&apos;s already content-addressed (
+                <Code>ipfs://</Code>, <Code>ar://</Code>). This is permanent - evidence can never be added to or
+                changed after this, not even during a dispute.
               </Step>
               <Step n={4} title="Validators judge live">
                 Anyone can trigger <Code>request_release</Code>. Five independent validators fetch the evidence
@@ -250,11 +252,16 @@ export function Docs() {
                 Declines the engagement with a required reason (capped at 2,000 characters) and refunds the
                 deposit to the depositor immediately.
               </Method>
-              <Method name="submit_deliverable" args="engagement_id, evidence_urls, notes" note="Write · counterparty only, one-time">
+              <Method
+                name="submit_deliverable"
+                args="engagement_id, evidence_urls, evidence_hashes, notes"
+                note="Write · counterparty only, one-time"
+              >
                 Attaches evidence and moves the engagement to <Code>submitted</Code>. Requires the engagement to be{' '}
-                <Code>accepted</Code> first, can only be called once, and every URL must match the bound{' '}
-                <Code>allowed_evidence_prefix</Code>. This is the only place evidence is ever set - it&apos;s
-                locked from here on, including through every future dispute.
+                <Code>accepted</Code> first, can only be called once, every URL&apos;s parsed scheme/host/path must
+                match the bound <Code>allowed_evidence_prefix</Code>, and every mutable URL (anything except{' '}
+                <Code>ipfs://</Code>/<Code>ar://</Code>) needs a paired sha256 hash. This is the only place evidence
+                is ever set - it&apos;s locked from here on, including through every future dispute.
               </Method>
               <Method name="request_release" args="engagement_id" note="Write · triggers validator judgment">
                 Runs the validator comparison against the (locked) evidence and spec; moves the engagement to{' '}
@@ -391,7 +398,18 @@ export function Docs() {
               <Concept term="Can the counterparty submit different evidence later?">
                 No. <Code>submit_deliverable</Code> can only be called once, and <Code>raise_dispute</Code> takes
                 no evidence parameter at all - it can only contest the evidence already on file and force a
-                re-judgment of it. Whatever was submitted at the start is what gets judged, every time.
+                re-judgment of it. Whatever was submitted at the start is what gets judged, every time. The URL
+                match itself is structural too - parsed scheme, host, and path, not a raw string prefix - so a
+                trick like a lookalike subdomain or a similarly-named path can&apos;t sneak past the bound source.
+              </Concept>
+              <Concept term="What stops a mutable page from showing different content at judgment time?">
+                Locking the URL only pins <em>where</em> the evidence lives - a live page could still change what
+                it shows between the first judgment and a later re-judgment. Content-addressed evidence (
+                <Code>ipfs://</Code>, <Code>ar://</Code>) is immune to this by construction, since the reference is
+                itself a hash of the content. Anything else needs a sha256 hash submitted alongside the URL;
+                every <Code>request_release</Code> call re-hashes whatever it actually fetches and compares it
+                against that commitment before any validator or LLM ever sees the content - a mismatch is a
+                deterministic rejection naming the tampered URL, not a judgment call.
               </Concept>
               <Concept term="Are comments visible to anyone else?">
                 No. Each comment is end-to-end encrypted for the depositor and counterparty only - not even this

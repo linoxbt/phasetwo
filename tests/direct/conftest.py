@@ -2,6 +2,12 @@ import datetime
 
 CONTRACT_PATH = "contracts/surety.py"
 
+# Direct mode never actually fetches evidence or runs judge() (that needs a
+# real LLM), so submit_deliverable's hash just needs to be well-formed - its
+# correctness against real fetched content is only checked in integration
+# tests, where it has to be a genuine sha256 of the fixture page.
+DUMMY_HASH = "a" * 64
+
 # Fixed reference time used across tests; deadlines are computed relative to it.
 NOW_ISO = "2026-01-01T00:00:00Z"
 NOW_TS = int(datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc).timestamp())

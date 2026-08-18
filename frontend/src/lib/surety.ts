@@ -86,13 +86,14 @@ export async function submitDeliverable(
   provider: EIP1193Provider,
   engagementId: number,
   evidenceUrls: string[],
+  evidenceHashes: string[],
   notes: string,
 ) {
   const client = createWriteClient(account, provider)
   return client.writeContract({
     address: getContractAddress(),
     functionName: 'submit_deliverable',
-    args: [engagementId, evidenceUrls, notes],
+    args: [engagementId, evidenceUrls, evidenceHashes, notes],
     value: 0n,
   })
 }
